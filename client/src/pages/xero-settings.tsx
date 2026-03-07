@@ -83,8 +83,7 @@ export default function XeroSettings() {
 
   const disconnectMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/xero/disconnect");
-      return res.json();
+      await apiRequest("POST", "/api/xero/disconnect");
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/xero/status"] });
