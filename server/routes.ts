@@ -164,7 +164,7 @@ export async function registerRoutes(
   app.post("/api/xero/import-invoices", async (req, res) => {
     try {
       const monthsBack = req.body.monthsBack || 12;
-      const rawInvoices = await fetchXeroInvoices(monthsBack);
+      const rawInvoices = await fetchXeroInvoicesWithPayments(monthsBack);
 
       const rentInvoices = rawInvoices.filter((inv: any) =>
         inv.LineItems && inv.LineItems.some((li: any) => li.AccountCode === "200")
@@ -178,6 +178,7 @@ export async function registerRoutes(
       const tenantMap: Record<string, {
         contact: string;
         teRef: string;
+        propertyCode: string;
         months: Record<string, number>;
         latestRent: number;
         latestMonth: string;
@@ -197,14 +198,22 @@ export async function registerRoutes(
           const teRef = teMatch ? teMatch[0] : "";
           const key = contact;
 
+          const tracking = (li.Tracking || []).find((t: any) => t.Name === "PROPERTY");
+          let propertyCode = "";
+          if (tracking) {
+            const propMatch = tracking.Option.match(/#\d+[.:]\s*(.+)/);
+            propertyCode = propMatch ? propMatch[1].trim() : tracking.Option;
+          }
+
           if (!tenantMap[key]) {
-            tenantMap[key] = { contact, teRef, months: {}, latestRent: 0, latestMonth: "", invoiceIds: [] };
+            tenantMap[key] = { contact, teRef, propertyCode, months: {}, latestRent: 0, latestMonth: "", invoiceIds: [] };
           }
 
           if (!tenantMap[key].months[month]) tenantMap[key].months[month] = 0;
           tenantMap[key].months[month] += li.LineAmount;
           tenantMap[key].invoiceIds.push(inv.InvoiceNumber);
           if (teRef) tenantMap[key].teRef = teRef;
+          if (propertyCode) tenantMap[key].propertyCode = propertyCode;
 
           if (month >= tenantMap[key].latestMonth) {
             tenantMap[key].latestMonth = month;
@@ -217,6 +226,40 @@ export async function registerRoutes(
       const activeTenants = Object.entries(tenantMap)
         .filter(([_, t]) => t.latestMonth >= currentMonth || t.latestMonth >= "2026-02")
         .sort((a, b) => a[0].localeCompare(b[0]));
+
+      const propOrder = ["16RC", "10KG", "32LFR", "84DD", "4WS", "26BLA", "26BLB", "26BLC", "27BLA", "27BLB", "27BLC", "27BLD"];
+      const byProp: Record<string, { contact: string; tenant: typeof tenantMap[string]; cleanName: string; surname: string; firstInitial: string }[]> = {};
+      for (const [contactName, tenant] of activeTenants) {
+        const prop = tenant.propertyCode || "UNKNOWN";
+        if (!byProp[prop]) byProp[prop] = [];
+        const cleanName = contactName.replace(/\s*\(\d+\)\s*$/, "").trim();
+        const parts = cleanName.split(" ");
+        const surname = parts[parts.length - 1];
+        const firstInitial = parts[0][0];
+        byProp[prop].push({ contact: contactName, tenant, cleanName, surname, firstInitial });
+      }
+
+      const sortedTenants: { contact: string; tenant: typeof tenantMap[string]; displayName: string; code: string; prop: string; sortOrder: number }[] = [];
+      let sortIdx = 0;
+      for (const prop of propOrder) {
+        const tenants = byProp[prop] || [];
+        tenants.sort((a, b) => a.surname.localeCompare(b.surname));
+        for (let i = 0; i < tenants.length; i++) {
+          sortIdx++;
+          const t = tenants[i];
+          const unitNum = i + 1;
+          const code = `${prop}#${unitNum}`;
+          const displayName = `${code} ${t.firstInitial} ${t.surname}`;
+          sortedTenants.push({ contact: t.contact, tenant: t.tenant, displayName, code, prop, sortOrder: sortIdx });
+        }
+      }
+      if (byProp["UNKNOWN"]) {
+        for (const t of byProp["UNKNOWN"]) {
+          sortIdx++;
+          const cleanName = t.cleanName;
+          sortedTenants.push({ contact: t.contact, tenant: t.tenant, displayName: cleanName, code: `UNK-${sortIdx}`, prop: "UNKNOWN", sortOrder: sortIdx });
+        }
+      }
 
       const { db: dbInstance } = await import("./db");
       const {
@@ -239,15 +282,31 @@ export async function registerRoutes(
         await dbInstance.delete(clTable).where(eq(clTable.id, line.id));
       }
 
-      const rollupLine = await storage.createCashflowLine({
-        code: "RENT-000",
-        name: "Rent Revenue (Total)",
+      const prepaidLine = await storage.createCashflowLine({
+        code: "RENT-PRE",
+        name: "Prepaid Topline",
         category: "Rent Revenue",
-        subcategory: "Rollup",
+        subcategory: "Timing Adjustment",
         direction: "inflow",
         lineType: "recurring_fixed",
-        isRollup: true,
+        isRollup: false,
         sortOrder: 0,
+        active: true,
+      });
+
+      await storage.createForecastRule({
+        cashflowLineId: prepaidLine.id,
+        recurrenceType: "monthly",
+        frequency: 1,
+        baseAmount: "0.00",
+        startDate: "2026-03-01",
+        endDate: null,
+        upliftType: "none",
+        upliftValue: "0",
+        upliftFrequency: "annual",
+        paymentTimingRule: null,
+        timingFlexibility: "fixed",
+        forecastConfidence: "high",
         active: true,
       });
 
@@ -257,23 +316,21 @@ export async function registerRoutes(
       const santander = bankAccounts.find(a => a.name.toLowerCase().includes("santander"));
       const defaultBankId = santander?.id || bankAccounts[0]?.id || 1;
 
-      for (let i = 0; i < activeTenants.length; i++) {
-        const [contactName, tenant] = activeTenants[i];
-        const shortName = contactName.replace(/\s*\(\d+\)\s*$/, "").trim();
-        const code = `RENT-${String(i + 1).padStart(3, "0")}`;
+      for (const st of sortedTenants) {
+        const { contact: contactName, tenant, displayName, code, prop, sortOrder } = st;
 
         const line = await storage.createCashflowLine({
           code,
-          name: `${shortName}`,
+          name: displayName,
           category: "Rent Revenue",
-          subcategory: tenant.teRef || undefined,
+          subcategory: prop,
           supplierName: contactName,
           bankAccountId: defaultBankId,
           direction: "inflow",
           lineType: "recurring_fixed",
           isRollup: false,
-          parentLineId: rollupLine.id,
-          sortOrder: i + 1,
+          parentLineId: prepaidLine.id,
+          sortOrder,
           active: true,
         });
 
@@ -344,16 +401,44 @@ export async function registerRoutes(
         success: true,
         tenantsCreated: created,
         actualsImported,
-        totalMonthlyRent: activeTenants.reduce((sum, [_, t]) => sum + t.latestRent, 0),
-        tenants: activeTenants.map(([name, t]) => ({
-          name: name.replace(/\s*\(\d+\)\s*$/, ""),
-          teRef: t.teRef,
-          currentRent: t.latestRent,
-          historicalMonths: Object.keys(t.months).length,
+        totalMonthlyRent: sortedTenants.reduce((sum, st) => sum + st.tenant.latestRent, 0),
+        tenants: sortedTenants.map(st => ({
+          name: st.displayName,
+          code: st.code,
+          property: st.prop,
+          teRef: st.tenant.teRef,
+          currentRent: st.tenant.latestRent,
+          historicalMonths: Object.keys(st.tenant.months).length,
         })),
       });
     } catch (err: any) {
       console.error("Invoice import error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/xero/invoices-raw", async (req, res) => {
+    try {
+      const monthsBack = parseInt(req.query.monthsBack as string) || 1;
+      const invoices = await fetchXeroInvoicesWithPayments(monthsBack);
+      const rentInvoices = invoices.filter((inv: any) =>
+        inv.LineItems && inv.LineItems.some((li: any) => li.AccountCode === "200")
+      );
+      const mapped = rentInvoices.map((inv: any) => ({
+        InvoiceNumber: inv.InvoiceNumber,
+        Contact: inv.Contact?.Name,
+        ContactID: inv.Contact?.ContactID,
+        Date: inv.Date,
+        LineItems: inv.LineItems?.map((li: any) => ({
+          Description: li.Description,
+          AccountCode: li.AccountCode,
+          LineAmount: li.LineAmount,
+          Tracking: li.Tracking,
+        })),
+        Payments: inv.Payments,
+      }));
+      res.json({ count: rentInvoices.length, invoices: mapped });
+    } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
   });
