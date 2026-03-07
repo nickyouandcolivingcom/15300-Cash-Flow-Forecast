@@ -41,6 +41,7 @@ const SCOPES = [
   "profile",
   "email",
   "accounting.banktransactions.read",
+  "accounting.invoices.read",
   "accounting.settings.read",
   "accounting.contacts.read",
   "offline_access",
@@ -394,6 +395,30 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
   });
 
   return { imported, mapped, errors };
+}
+
+export async function fetchXeroInvoices(monthsBack: number = 12): Promise<any[]> {
+  const startDate = new Date();
+  startDate.setMonth(startDate.getMonth() - monthsBack);
+  
+  let allInvoices: any[] = [];
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore) {
+    const data = await xeroApiGet(
+      `Invoices?where=Type%3D%3D%22ACCREC%22%26%26Date>%3DDateTime(${startDate.getFullYear()},${startDate.getMonth() + 1},${startDate.getDate()})&order=Date%20DESC&page=${page}`
+    );
+    const invoices = data.Invoices || [];
+    allInvoices = allInvoices.concat(invoices);
+    if (invoices.length < 100) {
+      hasMore = false;
+    } else {
+      page++;
+    }
+  }
+
+  return allInvoices;
 }
 
 export { getRedirectUri };

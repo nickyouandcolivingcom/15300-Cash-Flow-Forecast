@@ -17,6 +17,7 @@ import {
   importBankTransactions,
   getRedirectUri,
   validateOAuthState,
+  fetchXeroInvoices,
 } from "./xero";
 
 async function updateActualsForMonth(month: string): Promise<void> {
@@ -109,6 +110,32 @@ export async function registerRoutes(
       const monthsBack = req.body.monthsBack || 3;
       const result = await importBankTransactions(monthsBack);
       res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/xero/invoices", async (req, res) => {
+    try {
+      const monthsBack = parseInt(req.query.monthsBack as string) || 12;
+      const invoices = await fetchXeroInvoices(monthsBack);
+      const summary = invoices.map((inv: any) => ({
+        invoiceNumber: inv.InvoiceNumber,
+        reference: inv.Reference,
+        contact: inv.Contact?.Name,
+        date: inv.Date,
+        dueDate: inv.DueDate,
+        total: inv.Total,
+        amountPaid: inv.AmountPaid,
+        amountDue: inv.AmountDue,
+        status: inv.Status,
+        lineItems: inv.LineItems?.map((li: any) => ({
+          description: li.Description,
+          accountCode: li.AccountCode,
+          amount: li.LineAmount,
+        })),
+      }));
+      res.json({ count: invoices.length, invoices: summary });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
