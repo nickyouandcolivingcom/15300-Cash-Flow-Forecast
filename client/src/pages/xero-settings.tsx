@@ -160,7 +160,7 @@ export default function XeroSettings() {
               </div>
               {authUrlData?.url && (
                 <Button asChild data-testid="button-connect-xero">
-                  <a href={authUrlData.url}>
+                  <a href={authUrlData.url} target="_blank" rel="noopener noreferrer">
                     <ExternalLink className="h-4 w-4 mr-1.5" />
                     Connect to Xero
                   </a>
