@@ -919,7 +919,17 @@ export async function registerRoutes(
 
     const totalBalance = bankAccountsList.reduce((sum, a) => sum + (parseFloat(a.currentBalance as string) || 0), 0);
 
-    const grid = lines.filter(l => l.active).map(line => {
+    const activeLines = lines.filter(l => l.active).sort((a, b) => {
+      if (a.direction === "outflow" && b.direction === "outflow") {
+        const aDue = a.dueDay ?? 99;
+        const bDue = b.dueDay ?? 99;
+        if (aDue !== bDue) return aDue - bDue;
+        return a.name.localeCompare(b.name);
+      }
+      return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+    });
+
+    const grid = activeLines.map(line => {
       const lineForecasts = forecasts.filter(f => f.cashflowLineId === line.id);
       const lineOverrides = allOverrides.filter(o => o.cashflowLineId === line.id);
       const lineVariances = allVariances.filter(v => v.cashflowLineId === line.id);
