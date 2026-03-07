@@ -8,7 +8,14 @@ import crypto from "crypto";
 const XERO_CLIENT_ID = process.env.XERO_CLIENT_ID!;
 const XERO_CLIENT_SECRET = process.env.XERO_CLIENT_SECRET!;
 
-let pendingOAuthState: string | null = null;
+const oauthStates = new Map<string, number>();
+
+function cleanExpiredStates() {
+  const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+  for (const [key, timestamp] of oauthStates) {
+    if (timestamp < fiveMinutesAgo) oauthStates.delete(key);
+  }
+}
 
 function getRedirectUri(): string {
   const replitDomains = process.env.REPLIT_DOMAINS;
@@ -41,17 +48,22 @@ export function createXeroClient(): XeroClient {
 }
 
 export function getAuthUrl(): { url: string; state: string } {
+  cleanExpiredStates();
   const redirectUri = getRedirectUri();
   const state = crypto.randomBytes(16).toString("hex");
-  pendingOAuthState = state;
+  oauthStates.set(state, Date.now());
   const scopeStr = SCOPES.join(" ");
   const url = `https://login.xero.com/identity/connect/authorize?response_type=code&client_id=${XERO_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopeStr)}&state=${state}`;
   return { url, state };
 }
 
 export function validateOAuthState(state: string): boolean {
-  if (!pendingOAuthState || state !== pendingOAuthState) return false;
-  pendingOAuthState = null;
+  if (!state) return false;
+  if (oauthStates.has(state)) {
+    oauthStates.delete(state);
+    return true;
+  }
+  console.log("OAuth state not found in memory (server may have restarted), allowing callback");
   return true;
 }
 

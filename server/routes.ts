@@ -72,14 +72,21 @@ export async function registerRoutes(
   app.get("/api/xero/callback", async (req, res) => {
     const code = req.query.code as string;
     const state = req.query.state as string;
-    if (!code) {
-      return res.status(400).send("Missing authorization code");
+    const error = req.query.error as string;
+    console.log("Xero callback received:", { hasCode: !!code, hasState: !!state, error: error || "none" });
+    if (error) {
+      console.error("Xero returned error:", error);
+      return res.redirect(`/xero?xero_error=${encodeURIComponent(error)}`);
     }
-    if (!state || !validateOAuthState(state)) {
-      return res.status(400).send("Invalid OAuth state - possible CSRF attack");
+    if (!code) {
+      return res.redirect("/xero?xero_error=Missing+authorization+code");
+    }
+    if (!validateOAuthState(state)) {
+      return res.redirect("/xero?xero_error=Invalid+OAuth+state");
     }
     try {
       const result = await exchangeCodeForTokens(code);
+      console.log("Xero connected successfully:", result.tenantName);
       res.redirect(`/xero?xero_connected=true&tenant=${encodeURIComponent(result.tenantName)}`);
     } catch (err: any) {
       console.error("Xero callback error:", err.message);
