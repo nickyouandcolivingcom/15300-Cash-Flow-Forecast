@@ -445,4 +445,10 @@ export async function fetchXeroInvoicesWithPayments(monthsBack: number = 3): Pro
   return allInvoices;
 }
 
+export async function fetchXeroBankTransactionsForContact(contactName: string): Promise<any> {
+  const encoded = encodeURIComponent(`Contact.Name=="${contactName}"`);
+  const data = await xeroApiGet(`BankTransactions?where=${encoded}&page=1&order=Date%20DESC`);
+  return data;
+}
+
 export { getRedirectUri };

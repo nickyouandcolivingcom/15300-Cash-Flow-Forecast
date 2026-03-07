@@ -20,6 +20,7 @@ import {
   validateOAuthState,
   fetchXeroInvoices,
   fetchXeroInvoicesWithPayments,
+  fetchXeroBankTransactionsForContact,
 } from "./xero";
 
 async function updateActualsForMonth(month: string): Promise<void> {
@@ -438,6 +439,16 @@ export async function registerRoutes(
         Payments: inv.Payments,
       }));
       res.json({ count: rentInvoices.length, invoices: mapped });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/xero/bank-transactions-contact", async (req, res) => {
+    try {
+      const contact = req.query.contact as string || "EON";
+      const data = await fetchXeroBankTransactionsForContact(contact);
+      res.json(data);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
