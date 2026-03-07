@@ -31,10 +31,8 @@ const SCOPES = [
   "profile",
   "email",
   "accounting.transactions.read",
-  "accounting.reports.read",
   "accounting.settings.read",
   "accounting.contacts.read",
-  "accounting.journals.read",
   "offline_access",
 ];
 
