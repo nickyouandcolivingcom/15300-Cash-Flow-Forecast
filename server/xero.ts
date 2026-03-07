@@ -40,9 +40,9 @@ const SCOPES = [
   "openid",
   "profile",
   "email",
-  "accounting.transactions",
-  "accounting.settings",
-  "accounting.contacts",
+  "accounting.banktransactions.read",
+  "accounting.settings.read",
+  "accounting.contacts.read",
   "offline_access",
 ];
 
