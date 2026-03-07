@@ -19,6 +19,7 @@ import {
   getRedirectUri,
   validateOAuthState,
   fetchXeroInvoices,
+  fetchXeroInvoicesWithPayments,
 } from "./xero";
 
 async function updateActualsForMonth(month: string): Promise<void> {
@@ -353,6 +354,92 @@ export async function registerRoutes(
       });
     } catch (err: any) {
       console.error("Invoice import error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/xero/calculate-prepaid", async (req, res) => {
+    try {
+      const monthsBack = req.body.monthsBack || 3;
+      const invoices = await fetchXeroInvoicesWithPayments(monthsBack);
+
+      function parseXeroDate(d: string): Date | null {
+        const m = d.match(/Date\((\d+)/);
+        return m ? new Date(parseInt(m[1])) : null;
+      }
+      function toMonth(d: Date): string {
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      }
+
+      const rentInvoices = invoices.filter((inv: any) =>
+        inv.LineItems && inv.LineItems.some((li: any) => li.AccountCode === "200")
+      );
+
+      const prepaidByMonth: Record<string, number> = {};
+
+      for (const inv of rentInvoices) {
+        if (inv.Status !== "PAID") continue;
+
+        const invoiceDate = parseXeroDate(inv.Date);
+        if (!invoiceDate) continue;
+        const dueMonth = toMonth(invoiceDate);
+
+        const rentAmount = inv.LineItems
+          .filter((li: any) => li.AccountCode === "200")
+          .reduce((sum: number, li: any) => sum + li.LineAmount, 0);
+
+        const payments = inv.Payments || [];
+        for (const payment of payments) {
+          const payDate = parseXeroDate(payment.Date);
+          if (!payDate) continue;
+          const payMonth = toMonth(payDate);
+
+          if (payMonth < dueMonth) {
+            const payAmount = payment.Amount || rentAmount;
+            if (!prepaidByMonth[payMonth]) prepaidByMonth[payMonth] = 0;
+            if (!prepaidByMonth[dueMonth]) prepaidByMonth[dueMonth] = 0;
+            prepaidByMonth[payMonth] += payAmount;
+            prepaidByMonth[dueMonth] -= payAmount;
+          }
+        }
+      }
+
+      const prepaidLine = (await storage.getCashflowLines()).find(l => l.code === "RENT-PRE");
+      if (!prepaidLine) {
+        return res.status(404).json({ message: "Prepaid Topline (RENT-PRE) not found" });
+      }
+
+      let updated = 0;
+      for (const [month, amount] of Object.entries(prepaidByMonth)) {
+        if (Math.abs(amount) < 0.01) continue;
+        await storage.upsertForecastMonth({
+          cashflowLineId: prepaidLine.id,
+          forecastMonth: month,
+          originalForecastAmount: "0.00",
+          currentForecastAmount: amount.toFixed(2),
+          actualAmount: amount.toFixed(2),
+          sourceRuleId: null,
+          status: "actual",
+        });
+        updated++;
+      }
+
+      await storage.createAuditLog({
+        entityType: "prepaid_topline",
+        entityId: prepaidLine.id,
+        action: "calculate_prepaid",
+        newValueJson: { prepaidByMonth, monthsAnalysed: monthsBack },
+        userName: "system",
+      });
+
+      res.json({
+        success: true,
+        prepaidLine: prepaidLine.id,
+        monthsUpdated: updated,
+        prepaidByMonth,
+      });
+    } catch (err: any) {
+      console.error("Prepaid calculation error:", err);
       res.status(500).json({ message: err.message });
     }
   });
