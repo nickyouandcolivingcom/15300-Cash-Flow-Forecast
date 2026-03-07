@@ -930,6 +930,15 @@ export async function registerRoutes(
 
     const totalBalance = bankAccountsList.reduce((sum, a) => sum + (parseFloat(a.currentBalance as string) || 0), 0);
 
+    const propDevOrder = ["16RC", "10KG", "32LFR", "84DD", "4WS", "26BLA", "26BLB", "26BLC", "27BLA", "27BLB", "27BLC", "27BLD", "26BL", "27BL"];
+    const getOutflowSortKey = (name: string) => {
+      const match = name.match(/\(([^)]+)\)\s*$/);
+      const prop = match ? match[1] : "";
+      const supplier = match ? name.slice(0, name.lastIndexOf("(")).trim() : name;
+      const propIdx = propDevOrder.indexOf(prop);
+      return { supplier, propIdx: propIdx >= 0 ? propIdx : 99 };
+    };
+
     const activeLines = lines.filter(l => l.active).sort((a, b) => {
       const dirOrder = (d: string) => d === "inflow" ? 0 : 1;
       if (dirOrder(a.direction) !== dirOrder(b.direction)) return dirOrder(a.direction) - dirOrder(b.direction);
@@ -937,7 +946,11 @@ export async function registerRoutes(
         const aDue = a.dueDay ?? 99;
         const bDue = b.dueDay ?? 99;
         if (aDue !== bDue) return aDue - bDue;
-        return a.name.localeCompare(b.name);
+        const aKey = getOutflowSortKey(a.name);
+        const bKey = getOutflowSortKey(b.name);
+        const supplierCmp = aKey.supplier.localeCompare(bKey.supplier);
+        if (supplierCmp !== 0) return supplierCmp;
+        return aKey.propIdx - bKey.propIdx;
       }
       return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
     });
