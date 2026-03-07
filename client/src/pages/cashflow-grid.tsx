@@ -57,7 +57,7 @@ function CellValue({ value, status, hasOverride, hasVariance, isNegative }: {
   hasVariance: boolean;
   isNegative?: boolean;
 }) {
-  let className = "text-right text-sm tabular-nums whitespace-nowrap px-3 py-2 ";
+  let className = "text-right text-xs tabular-nums whitespace-nowrap px-2 py-2 ";
 
   if (status === "actual") {
     className += "font-semibold bg-primary/5 ";
@@ -88,12 +88,12 @@ function TotalRow({ label, values, months, bold, highlight, showSign }: {
 }) {
   return (
     <tr className={`${bold ? "font-bold" : "font-semibold"} ${highlight === "positive" ? "bg-primary/5" : "bg-muted/30"} border-t`}>
-      <td className={`sticky left-0 z-10 px-4 py-2 text-sm ${bold ? "bg-primary/5" : "bg-muted/30"}`}>
+      <td className={`sticky left-0 z-10 px-4 py-2 text-xs ${bold ? "bg-primary/5" : "bg-muted/30"}`}>
         {label}
       </td>
       <td className={`text-center text-xs px-1 py-2 ${bold ? "bg-primary/5" : "bg-muted/30"}`}></td>
       {months.map(month => (
-        <td key={month} className={`text-right text-sm tabular-nums whitespace-nowrap px-3 py-2 ${(values[month] || 0) < 0 ? "text-red-600 dark:text-red-400" : ""}`}>
+        <td key={month} className={`text-right text-xs tabular-nums whitespace-nowrap px-2 py-2 ${(values[month] || 0) < 0 ? "text-red-600 dark:text-red-400" : ""}`}>
           {formatCurrency(values[month] || 0)}
         </td>
       ))}
@@ -306,7 +306,7 @@ function CategorySection({ category, lines, months, currentMonth, categoryTotals
         </td>
         <td className="text-center text-xs px-1 py-2"></td>
         {months.map(month => (
-          <td key={month} className={`text-right text-sm font-medium tabular-nums whitespace-nowrap px-3 py-2 ${
+          <td key={month} className={`text-right text-xs font-medium tabular-nums whitespace-nowrap px-2 py-2 ${
             month === currentMonth ? "bg-primary/5" : ""
           }`}>
             {formatCurrency(categoryTotals[month] || 0)}
