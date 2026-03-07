@@ -9,6 +9,15 @@ import {
   insertForecastRuleSchema,
   insertOverrideSchema,
 } from "@shared/schema";
+import {
+  getAuthUrl,
+  exchangeCodeForTokens,
+  isXeroConnected,
+  importBankAccounts,
+  importBankTransactions,
+  getRedirectUri,
+  validateOAuthState,
+} from "./xero";
 
 async function updateActualsForMonth(month: string): Promise<void> {
   const lines = await storage.getCashflowLines();
@@ -45,6 +54,74 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  app.get("/api/xero/status", async (_req, res) => {
+    try {
+      const status = await isXeroConnected();
+      res.json({ ...status, redirectUri: getRedirectUri() });
+    } catch (err: any) {
+      res.json({ connected: false, error: err.message });
+    }
+  });
+
+  app.get("/api/xero/auth-url", async (_req, res) => {
+    const { url } = getAuthUrl();
+    res.json({ url, redirectUri: getRedirectUri() });
+  });
+
+  app.get("/api/xero/callback", async (req, res) => {
+    const code = req.query.code as string;
+    const state = req.query.state as string;
+    if (!code) {
+      return res.status(400).send("Missing authorization code");
+    }
+    if (!state || !validateOAuthState(state)) {
+      return res.status(400).send("Invalid OAuth state - possible CSRF attack");
+    }
+    try {
+      const result = await exchangeCodeForTokens(code);
+      res.redirect(`/xero?xero_connected=true&tenant=${encodeURIComponent(result.tenantName)}`);
+    } catch (err: any) {
+      console.error("Xero callback error:", err.message);
+      res.redirect(`/xero?xero_error=${encodeURIComponent(err.message)}`);
+    }
+  });
+
+  app.post("/api/xero/import-accounts", async (_req, res) => {
+    try {
+      const result = await importBankAccounts();
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/xero/import-transactions", async (req, res) => {
+    try {
+      const monthsBack = req.body.monthsBack || 3;
+      const result = await importBankTransactions(monthsBack);
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/xero/full-sync", async (req, res) => {
+    try {
+      const accountsResult = await importBankAccounts();
+      const monthsBack = req.body.monthsBack || 3;
+      const txResult = await importBankTransactions(monthsBack);
+      await generateForecasts();
+      res.json({
+        success: true,
+        accounts: accountsResult,
+        transactions: txResult,
+        message: "Full sync complete - accounts imported, transactions synced, forecasts regenerated",
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
 
   app.get("/api/bank-accounts", async (_req, res) => {
     const accounts = await storage.getBankAccounts();

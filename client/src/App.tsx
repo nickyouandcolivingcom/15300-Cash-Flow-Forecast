@@ -14,6 +14,7 @@ import CashFlowLines from "@/pages/cashflow-lines";
 import ForecastRules from "@/pages/forecast-rules";
 import BankAccounts from "@/pages/bank-accounts";
 import AuditLogPage from "@/pages/audit-log";
+import XeroSettings from "@/pages/xero-settings";
 
 function Router() {
   return (
@@ -26,6 +27,7 @@ function Router() {
       <Route path="/rules" component={ForecastRules} />
       <Route path="/accounts" component={BankAccounts} />
       <Route path="/audit" component={AuditLogPage} />
+      <Route path="/xero" component={XeroSettings} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -177,3 +177,23 @@ export const insertAuditLogSchema = createInsertSchema(auditLog).omit({
 });
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 export type AuditLog = typeof auditLog.$inferSelect;
+
+export const xeroTokens = pgTable("xero_tokens", {
+  id: serial("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  tenantName: text("tenant_name"),
+  accessToken: text("access_token").notNull(),
+  refreshToken: text("refresh_token").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  scope: text("scope"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertXeroTokenSchema = createInsertSchema(xeroTokens).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertXeroToken = z.infer<typeof insertXeroTokenSchema>;
+export type XeroToken = typeof xeroTokens.$inferSelect;

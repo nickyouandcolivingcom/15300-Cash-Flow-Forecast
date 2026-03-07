@@ -1,4 +1,4 @@
-import { LayoutDashboard, Grid3X3, FileText, Settings, History, TrendingUp, AlertTriangle, Landmark } from "lucide-react";
+import { LayoutDashboard, Grid3X3, FileText, Settings, History, TrendingUp, AlertTriangle, Landmark, Link2 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -25,6 +25,7 @@ const configItems = [
   { title: "Forecast Rules", url: "/rules", icon: Settings },
   { title: "Bank Accounts", url: "/accounts", icon: Landmark },
   { title: "Audit Log", url: "/audit", icon: History },
+  { title: "Xero Integration", url: "/xero", icon: Link2 },
 ];
 
 export function AppSidebar() {

@@ -49,6 +49,19 @@ A rolling 13-month cash flow forecasting web app that reconciles to actual bank 
 6. Permanent changes rebase future forecasts
 7. All changes logged to audit trail
 
+## Xero Integration
+- OAuth 2.0 flow via `server/xero.ts`
+- Token storage in `xero_tokens` table (auto-refresh)
+- Bank account import from Xero
+- Bank transaction import with auto-mapping to cash flow lines
+- Mapping by supplier name (high confidence) and keyword matching (medium confidence)
+- UI at `/xero` for connection management and data import
+
+## Pages
+- `/xero` - Xero Integration settings and import controls
+
 ## Environment
 - DATABASE_URL - PostgreSQL connection string
 - SESSION_SECRET - Session encryption key
+- XERO_CLIENT_ID - Xero OAuth app client ID
+- XERO_CLIENT_SECRET - Xero OAuth app client secret
