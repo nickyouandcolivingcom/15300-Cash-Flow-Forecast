@@ -48,6 +48,7 @@ export const cashflowLines = pgTable("cashflow_lines", {
   isRollup: boolean("is_rollup").default(false),
   parentLineId: integer("parent_line_id"),
   direction: text("direction").notNull().default("outflow"),
+  dueDay: integer("due_day"),
   active: boolean("active").default(true),
   sortOrder: integer("sort_order").default(0),
 });

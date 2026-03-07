@@ -21,6 +21,7 @@ interface GridLine {
     direction: string;
     lineType: string;
     isRollup: boolean;
+    dueDay: number | null;
   };
   monthData: Record<string, {
     amount: number;
@@ -90,6 +91,7 @@ function TotalRow({ label, values, months, bold, highlight, showSign }: {
       <td className={`sticky left-0 z-10 px-4 py-2 text-sm ${bold ? "bg-primary/5" : "bg-muted/30"}`}>
         {label}
       </td>
+      <td className={`text-center text-xs px-1 py-2 ${bold ? "bg-primary/5" : "bg-muted/30"}`}></td>
       {months.map(month => (
         <td key={month} className={`text-right text-sm tabular-nums whitespace-nowrap px-3 py-2 ${(values[month] || 0) < 0 ? "text-red-600 dark:text-red-400" : ""}`}>
           {formatCurrency(values[month] || 0)}
@@ -194,6 +196,9 @@ export default function CashFlowGrid() {
                     <th className="sticky left-0 z-20 bg-muted/50 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-4 py-3 min-w-[240px]">
                       Cash Flow Line
                     </th>
+                    <th className="bg-muted/50 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-1 py-3 w-[40px]">
+                      Due
+                    </th>
                     {data.months.map((month, idx) => (
                       <th key={month} className={`text-right text-xs font-medium uppercase tracking-wider px-3 py-3 min-w-[100px] whitespace-nowrap ${
                         month === data.currentMonth ? "bg-primary/10 text-primary font-semibold" : "text-muted-foreground"
@@ -212,7 +217,7 @@ export default function CashFlowGrid() {
                   {inflowCategories.length > 0 && (
                     <>
                       <tr className="bg-emerald-50/50 dark:bg-emerald-950/10">
-                        <td colSpan={data.months.length + 1} className="px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                        <td colSpan={data.months.length + 2} className="px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
                           Cash Inflows
                         </td>
                       </tr>
@@ -239,7 +244,7 @@ export default function CashFlowGrid() {
                   {outflowCategories.length > 0 && (
                     <>
                       <tr className="bg-red-50/50 dark:bg-red-950/10">
-                        <td colSpan={data.months.length + 1} className="px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-red-700 dark:text-red-400">
+                        <td colSpan={data.months.length + 2} className="px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-red-700 dark:text-red-400">
                           Cash Outflows
                         </td>
                       </tr>
@@ -299,6 +304,7 @@ function CategorySection({ category, lines, months, currentMonth, categoryTotals
             <Badge variant="secondary" className="text-xs ml-1">{lines.length}</Badge>
           </div>
         </td>
+        <td className="text-center text-xs px-1 py-2"></td>
         {months.map(month => (
           <td key={month} className={`text-right text-sm font-medium tabular-nums whitespace-nowrap px-3 py-2 ${
             month === currentMonth ? "bg-primary/5" : ""
@@ -314,6 +320,9 @@ function CategorySection({ category, lines, months, currentMonth, categoryTotals
               <span className="text-xs">{row.line.name}</span>
               {row.line.lineType === "one_off" && <Badge variant="outline" className="text-[10px]">One-off</Badge>}
             </div>
+          </td>
+          <td className="text-center text-xs text-muted-foreground px-1 py-1.5 tabular-nums">
+            {row.line.dueDay ? String(row.line.dueDay).padStart(2, "0") : ""}
           </td>
           {months.map(month => {
             const cell = row.monthData[month];
