@@ -81,6 +81,21 @@ export default function XeroSettings() {
     },
   });
 
+  const disconnectMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/xero/disconnect");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/xero/status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/xero/auth-url"] });
+      toast({ title: "Disconnected from Xero" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Disconnect failed", description: err.message, variant: "destructive" });
+    },
+  });
+
   const fullSyncMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/xero/full-sync", { monthsBack: parseInt(monthsBack) });
@@ -132,12 +147,24 @@ export default function XeroSettings() {
         <CardContent className="space-y-4">
           {status?.connected ? (
             <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <CheckCircle className="h-5 w-5 text-emerald-500" />
-                <div>
-                  <p className="text-sm font-medium">Connected to: {status.tenantName}</p>
-                  <p className="text-xs text-muted-foreground">OAuth tokens are stored securely and refresh automatically</p>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="h-5 w-5 text-emerald-500" />
+                  <div>
+                    <p className="text-sm font-medium">Connected to: {status.tenantName}</p>
+                    <p className="text-xs text-muted-foreground">OAuth tokens are stored securely and refresh automatically</p>
+                  </div>
                 </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => disconnectMutation.mutate()}
+                  disabled={disconnectMutation.isPending}
+                  data-testid="button-disconnect-xero"
+                >
+                  <XCircle className="h-4 w-4 mr-1.5" />
+                  Disconnect
+                </Button>
               </div>
             </div>
           ) : (

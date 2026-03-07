@@ -115,6 +115,24 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/xero/disconnect", async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { xeroTokens } = await import("@shared/schema");
+      await db.delete(xeroTokens);
+      await storage.createAuditLog({
+        entityType: "xero_connection",
+        entityId: null,
+        action: "disconnected",
+        newValueJson: {},
+        userName: "system",
+      });
+      res.json({ success: true, message: "Disconnected from Xero" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/xero/invoices", async (req, res) => {
     try {
       const monthsBack = parseInt(req.query.monthsBack as string) || 12;
