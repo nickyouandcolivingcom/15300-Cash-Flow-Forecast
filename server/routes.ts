@@ -357,6 +357,192 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/xero/import-outflows", async (_req, res) => {
+    try {
+      const allTransactions = await storage.getActualTransactions();
+      const outflows = allTransactions.filter(t => parseFloat(t.amount as string) < 0);
+
+      const skipPatterns = [
+        /^bank transfer (to|from)/i,
+      ];
+
+      const depositRefundPattern = /\(deposit\)$/i;
+
+      const bySupplier: Record<string, {
+        supplier: string;
+        total: number;
+        count: number;
+        months: Record<string, number>;
+        recentAmount: number;
+        recentMonth: string;
+        bankAccountId: number;
+        txIds: number[];
+      }> = {};
+
+      for (const t of outflows) {
+        const supplier = t.supplierOrCounterparty || t.description || "Unknown";
+
+        if (skipPatterns.some(p => p.test(supplier))) continue;
+        if (depositRefundPattern.test(supplier)) continue;
+
+        const amount = Math.abs(parseFloat(t.amount as string));
+        const month = (t.transactionDate as string).substring(0, 7);
+
+        if (!bySupplier[supplier]) {
+          bySupplier[supplier] = {
+            supplier,
+            total: 0,
+            count: 0,
+            months: {},
+            recentAmount: 0,
+            recentMonth: "",
+            bankAccountId: t.bankAccountId,
+            txIds: [],
+          };
+        }
+
+        bySupplier[supplier].total += amount;
+        bySupplier[supplier].count++;
+        if (!bySupplier[supplier].months[month]) bySupplier[supplier].months[month] = 0;
+        bySupplier[supplier].months[month] += amount;
+        bySupplier[supplier].txIds.push(t.id);
+
+        if (month >= bySupplier[supplier].recentMonth) {
+          bySupplier[supplier].recentMonth = month;
+          bySupplier[supplier].recentAmount = bySupplier[supplier].months[month];
+        }
+      }
+
+      const { db: dbInstance } = await import("./db");
+      const {
+        cashflowLines: clTable,
+        forecastRules: frTable,
+        forecastMonths: fmTable,
+        varianceEvents: veTable,
+        overrides: orTable,
+      } = await import("@shared/schema");
+
+      const existingLines = await storage.getCashflowLines();
+      const outflowLines = existingLines.filter(l => l.direction === "outflow");
+      for (const line of outflowLines) {
+        await dbInstance.delete(fmTable).where(eq(fmTable.cashflowLineId, line.id));
+        await dbInstance.delete(frTable).where(eq(frTable.cashflowLineId, line.id));
+        await dbInstance.delete(veTable).where(eq(veTable.cashflowLineId, line.id));
+        await dbInstance.delete(orTable).where(eq(orTable.cashflowLineId, line.id));
+        await dbInstance.delete(clTable).where(eq(clTable.id, line.id));
+      }
+
+      const suppliers = Object.values(bySupplier).sort((a, b) => b.total - a.total);
+      let created = 0;
+      let mapped = 0;
+
+      for (let i = 0; i < suppliers.length; i++) {
+        const s = suppliers[i];
+        const code = `OUT-${String(i + 1).padStart(3, "0")}`;
+        const monthCount = Object.keys(s.months).length;
+
+        const monthlyAmounts = Object.values(s.months);
+        const avgMonthly = s.total / monthCount;
+        const isRecurring = monthCount >= 3;
+
+        let recurrenceType = "monthly";
+        let forecastAmount = avgMonthly;
+
+        if (monthCount === 1) {
+          recurrenceType = "one_off";
+          forecastAmount = s.total;
+        } else if (monthCount <= 3 && s.count <= 3) {
+          recurrenceType = "one_off";
+          forecastAmount = s.recentAmount;
+        } else if (monthCount >= 3 && monthCount <= 5) {
+          const recentMonths = Object.entries(s.months).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 3);
+          forecastAmount = recentMonths.reduce((sum, [_, v]) => sum + v, 0) / recentMonths.length;
+        } else {
+          const recentMonths = Object.entries(s.months).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 3);
+          forecastAmount = recentMonths.reduce((sum, [_, v]) => sum + v, 0) / recentMonths.length;
+        }
+
+        const line = await storage.createCashflowLine({
+          code,
+          name: s.supplier,
+          category: "Outflows",
+          subcategory: null,
+          supplierName: s.supplier,
+          bankAccountId: s.bankAccountId,
+          direction: "outflow",
+          lineType: isRecurring ? "recurring_fixed" : "one_off",
+          isRollup: false,
+          parentLineId: null,
+          sortOrder: i + 1,
+          active: true,
+        });
+
+        if (isRecurring) {
+          await storage.createForecastRule({
+            cashflowLineId: line.id,
+            recurrenceType: "monthly",
+            frequency: 1,
+            baseAmount: forecastAmount.toFixed(2),
+            startDate: "2026-03-01",
+            endDate: null,
+            upliftType: "none",
+            upliftValue: "0",
+            upliftFrequency: "annual",
+            paymentTimingRule: null,
+            timingFlexibility: "fixed",
+            forecastConfidence: isRecurring ? "high" : "medium",
+            active: true,
+          });
+        }
+
+        for (const txId of s.txIds) {
+          await storage.updateActualTransaction(txId, { cashflowLineId: line.id });
+          mapped++;
+        }
+
+        for (const [month, amount] of Object.entries(s.months)) {
+          await storage.upsertForecastMonth({
+            cashflowLineId: line.id,
+            forecastMonth: month,
+            originalForecastAmount: forecastAmount.toFixed(2),
+            currentForecastAmount: forecastAmount.toFixed(2),
+            actualAmount: amount.toFixed(2),
+            sourceRuleId: null,
+            status: "actual",
+          });
+        }
+
+        created++;
+      }
+
+      await generateForecasts();
+
+      await storage.createAuditLog({
+        entityType: "outflow_import",
+        entityId: null,
+        action: "import_supplier_outflows",
+        newValueJson: { suppliersCreated: created, transactionsMapped: mapped },
+        userName: "system",
+      });
+
+      res.json({
+        success: true,
+        suppliersCreated: created,
+        transactionsMapped: mapped,
+        suppliers: suppliers.map(s => ({
+          name: s.supplier,
+          totalSpend: s.total,
+          monthsActive: Object.keys(s.months).length,
+          forecastAmount: s.total / Object.keys(s.months).length,
+          transactions: s.count,
+        })),
+      });
+    } catch (err: any) {
+      console.error("Outflow import error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/xero/full-sync", async (req, res) => {
     try {
       const accountsResult = await importBankAccounts();

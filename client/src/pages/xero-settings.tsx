@@ -136,7 +136,27 @@ export default function XeroSettings() {
     },
   });
 
-  const isSyncing = importAccountsMutation.isPending || importTransactionsMutation.isPending || fullSyncMutation.isPending || importInvoicesMutation.isPending;
+  const importOutflowsMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/xero/import-outflows");
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cashflow-lines"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cashflow-grid"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
+      toast({
+        title: "Supplier outflows imported",
+        description: `${data.suppliersCreated} supplier lines created, ${data.transactionsMapped} transactions mapped`,
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Outflow import failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const isSyncing = importAccountsMutation.isPending || importTransactionsMutation.isPending || fullSyncMutation.isPending || importInvoicesMutation.isPending || importOutflowsMutation.isPending;
 
   if (isLoading) {
     return (
@@ -296,11 +316,25 @@ export default function XeroSettings() {
                   )}
                   Import Rent Invoices
                 </Button>
+
+                <Button
+                  variant="secondary"
+                  onClick={() => importOutflowsMutation.mutate()}
+                  disabled={isSyncing}
+                  data-testid="button-import-outflows"
+                >
+                  {importOutflowsMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4 mr-1.5" />
+                  )}
+                  Import Supplier Outflows
+                </Button>
               </div>
 
               <p className="text-xs text-muted-foreground">
-                Full Sync imports bank accounts, transactions, updates balances, and regenerates all forecasts.
-                Import Rent Invoices pulls invoices from Xero account 200 and creates individual tenancy lines with historical actuals.
+                Full Sync imports bank accounts and transactions. Import Rent Invoices creates tenancy lines from Xero invoices.
+                Import Supplier Outflows creates one outflow line per supplier from bank transaction history, with forecast rules based on payment patterns.
               </p>
             </CardContent>
           </Card>
