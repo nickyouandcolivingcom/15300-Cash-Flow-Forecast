@@ -920,7 +920,9 @@ export async function registerRoutes(
     const totalBalance = bankAccountsList.reduce((sum, a) => sum + (parseFloat(a.currentBalance as string) || 0), 0);
 
     const activeLines = lines.filter(l => l.active).sort((a, b) => {
-      if (a.direction === "outflow" && b.direction === "outflow") {
+      const dirOrder = (d: string) => d === "inflow" ? 0 : 1;
+      if (dirOrder(a.direction) !== dirOrder(b.direction)) return dirOrder(a.direction) - dirOrder(b.direction);
+      if (a.direction === "outflow") {
         const aDue = a.dueDay ?? 99;
         const bDue = b.dueDay ?? 99;
         if (aDue !== bDue) return aDue - bDue;
