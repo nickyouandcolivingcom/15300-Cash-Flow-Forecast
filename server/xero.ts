@@ -220,69 +220,50 @@ export async function isXeroConnected(): Promise<{ connected: boolean; tenantNam
   return { connected: true, tenantName: token?.tenantName || undefined };
 }
 
-export async function importBankAccounts(): Promise<{ imported: number; errors: string[] }> {
+export async function importBankAccounts(): Promise<{ imported: number; skipped: number; errors: string[] }> {
   const data = await xeroApiGet("Accounts?where=Type%3D%3D%22BANK%22");
   const accounts = data.Accounts || [];
   const existingAccounts = await storage.getBankAccounts();
   const errors: string[] = [];
 
   let imported = 0;
+  let skipped = 0;
+
   for (const acc of accounts) {
     const match = existingAccounts.find(e => e.xeroAccountId === acc.AccountID);
 
     if (match) {
-      await storage.updateBankAccount(match.id, {
-        name: acc.Name,
-      });
+      imported++;
     } else {
+      const isExcluded = existingAccounts.some(e => e.xeroAccountId === acc.AccountID && !e.active);
+      if (isExcluded) {
+        skipped++;
+        continue;
+      }
       await storage.createBankAccount({
         name: acc.Name,
         xeroAccountId: acc.AccountID,
         currentBalance: "0",
         active: true,
       });
+      imported++;
     }
-    imported++;
-  }
-
-  const bankAccounts = await storage.getBankAccounts();
-  try {
-    const balData = await xeroApiGet("Reports/BankSummary");
-    if (balData?.Reports?.[0]?.Rows) {
-      for (const row of balData.Reports[0].Rows) {
-        if (row.RowType === "Section" && row.Rows) {
-          for (const subRow of row.Rows) {
-            const accountId = subRow.Cells?.[0]?.Attributes?.[0]?.Value;
-            if (!accountId) continue;
-            const ba = bankAccounts.find(b => b.xeroAccountId === accountId);
-            if (!ba) continue;
-            const balance = subRow.Cells?.[subRow.Cells.length - 1]?.Value;
-            if (balance && !isNaN(parseFloat(balance))) {
-              await storage.updateBankAccount(ba.id, {
-                currentBalance: String(parseFloat(balance)),
-              });
-            }
-          }
-        }
-      }
-    }
-  } catch (err: any) {
-    errors.push(`Balance fetch failed: ${err.message}`);
   }
 
   await storage.createAuditLog({
     entityType: "xero_sync",
     entityId: null,
     action: "import_bank_accounts",
-    newValueJson: { imported, errors },
+    newValueJson: { imported, skipped, errors },
     userName: "system",
   });
 
-  return { imported, errors };
+  return { imported, skipped, errors };
 }
 
 export async function importBankTransactions(monthsBack: number = 3): Promise<{ imported: number; mapped: number; errors: string[] }> {
   const bankAccounts = await storage.getBankAccounts();
+  const activeBankAccounts = bankAccounts.filter(ba => ba.active && ba.xeroAccountId);
   const cashflowLines = await storage.getCashflowLines();
   const existingTransactions = await storage.getActualTransactions({});
   const existingXeroIds = new Set(existingTransactions.map(t => t.xeroTransactionId).filter(Boolean));
@@ -294,69 +275,113 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
   let imported = 0;
   let mapped = 0;
 
-  for (const ba of bankAccounts) {
-    if (!ba.xeroAccountId) continue;
+  for (const ba of activeBankAccounts) {
+    let page = 1;
+    let hasMore = true;
 
-    try {
-      const data = await xeroApiGet(
-        `BankTransactions?where=BankAccount.AccountID%3D%3DGuid("${ba.xeroAccountId}")%26%26Date>%3DDateTime(${startDate.getFullYear()},${startDate.getMonth() + 1},${startDate.getDate()})&order=Date%20DESC`
-      );
-
-      const transactions = data.BankTransactions || [];
-
-      for (const tx of transactions) {
-        if (tx.Status === "DELETED") continue;
-        if (existingXeroIds.has(tx.BankTransactionID)) continue;
-
-        const contactName = tx.Contact?.Name || "";
-        const description = tx.Reference || tx.LineItems?.[0]?.Description || contactName;
-        const amount = tx.Type === "RECEIVE" ? Math.abs(tx.Total) : -Math.abs(tx.Total);
-
-        let matchedLineId: number | null = null;
-        let confidence = "unmatched";
-        let method = "none";
-
-        const supplierMatch = cashflowLines.find(
-          l => l.supplierName && contactName.toLowerCase().includes(l.supplierName.toLowerCase())
+    while (hasMore) {
+      try {
+        const data = await xeroApiGet(
+          `BankTransactions?where=BankAccount.AccountID%3D%3DGuid("${ba.xeroAccountId}")%26%26Date>%3DDateTime(${startDate.getFullYear()},${startDate.getMonth() + 1},${startDate.getDate()})&order=Date%20DESC&page=${page}`
         );
-        if (supplierMatch) {
-          matchedLineId = supplierMatch.id;
-          confidence = "high";
-          method = "supplier_match";
-        } else {
-          const nameMatch = cashflowLines.find(
-            l => contactName.toLowerCase().includes(l.name.toLowerCase().split(" ")[0]) ||
-                 (description && l.name.toLowerCase().split(" ").some((w: string) => w.length > 3 && description.toLowerCase().includes(w)))
-          );
-          if (nameMatch) {
-            matchedLineId = nameMatch.id;
-            confidence = "medium";
-            method = "keyword_match";
-          }
+
+        const transactions = data.BankTransactions || [];
+        console.log(`Fetched ${transactions.length} transactions for ${ba.name} (page ${page})`);
+
+        if (transactions.length === 0) {
+          hasMore = false;
+          break;
         }
 
-        await storage.createActualTransaction({
-          xeroTransactionId: tx.BankTransactionID,
-          xeroSourceType: tx.Type,
-          transactionDate: tx.Date.split("T")[0],
-          amount: String(amount),
-          description,
-          supplierOrCounterparty: contactName,
-          bankAccountId: ba.id,
-          cashflowLineId: matchedLineId,
-          mappedConfidence: confidence,
-          mappingMethod: method,
-          reconciledFlag: tx.IsReconciled || false,
-        });
+        for (const tx of transactions) {
+          if (tx.Status === "DELETED" || tx.Status === "VOIDED") continue;
+          if (existingXeroIds.has(tx.BankTransactionID)) continue;
 
-        existingXeroIds.add(tx.BankTransactionID);
-        imported++;
-        if (matchedLineId) mapped++;
+          const contactName = tx.Contact?.Name || "";
+          const description = tx.Reference || tx.LineItems?.[0]?.Description || contactName;
+          const amount = tx.Type === "RECEIVE" ? Math.abs(tx.Total) : -Math.abs(tx.Total);
+
+          let txDate: string;
+          if (typeof tx.Date === "string" && tx.Date.startsWith("/Date(")) {
+            const ms = parseInt(tx.Date.match(/\d+/)?.[0] || "0");
+            txDate = new Date(ms).toISOString().split("T")[0];
+          } else if (typeof tx.Date === "string" && tx.Date.includes("T")) {
+            txDate = tx.Date.split("T")[0];
+          } else {
+            txDate = String(tx.Date);
+          }
+
+          let matchedLineId: number | null = null;
+          let confidence = "unmatched";
+          let method = "none";
+
+          const supplierMatch = cashflowLines.find(
+            l => l.supplierName && contactName && contactName.toLowerCase().includes(l.supplierName.toLowerCase())
+          );
+          if (supplierMatch) {
+            matchedLineId = supplierMatch.id;
+            confidence = "high";
+            method = "supplier_match";
+          } else {
+            const nameMatch = cashflowLines.find(
+              l => {
+                const words = l.name.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
+                return words.some((w: string) =>
+                  contactName.toLowerCase().includes(w) ||
+                  (description && description.toLowerCase().includes(w))
+                );
+              }
+            );
+            if (nameMatch) {
+              matchedLineId = nameMatch.id;
+              confidence = "medium";
+              method = "keyword_match";
+            }
+          }
+
+          await storage.createActualTransaction({
+            xeroTransactionId: tx.BankTransactionID,
+            xeroSourceType: tx.Type,
+            transactionDate: txDate,
+            amount: String(amount),
+            description,
+            supplierOrCounterparty: contactName,
+            bankAccountId: ba.id,
+            cashflowLineId: matchedLineId,
+            mappedConfidence: confidence,
+            mappingMethod: method,
+            reconciledFlag: tx.IsReconciled || false,
+          });
+
+          existingXeroIds.add(tx.BankTransactionID);
+          imported++;
+          if (matchedLineId) mapped++;
+        }
+
+        if (transactions.length < 100) {
+          hasMore = false;
+        } else {
+          page++;
+        }
+      } catch (err: any) {
+        const msg = `Error importing transactions for ${ba.name} (page ${page}): ${err.message}`;
+        console.error(msg);
+        errors.push(msg);
+        hasMore = false;
+      }
+    }
+
+    try {
+      const allTx = await storage.getActualTransactions({ bankAccountId: ba.id });
+      if (allTx.length > 0) {
+        const totalBalance = allTx.reduce((sum, t) => sum + parseFloat(t.amount), 0);
+        await storage.updateBankAccount(ba.id, {
+          currentBalance: String(Math.round(totalBalance * 100) / 100),
+        });
+        console.log(`Updated ${ba.name} balance from transactions: ${totalBalance.toFixed(2)}`);
       }
     } catch (err: any) {
-      const msg = `Error importing transactions for ${ba.name}: ${err.message}`;
-      console.error(msg);
-      errors.push(msg);
+      errors.push(`Balance calculation failed for ${ba.name}: ${err.message}`);
     }
   }
 
