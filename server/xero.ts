@@ -8,14 +8,24 @@ import crypto from "crypto";
 const XERO_CLIENT_ID = process.env.XERO_CLIENT_ID!;
 const XERO_CLIENT_SECRET = process.env.XERO_CLIENT_SECRET!;
 
-const oauthStates = new Map<string, number>();
+const oauthStates = new Map<string, { timestamp: number; codeVerifier: string }>();
 
 function cleanExpiredStates() {
   const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
-  for (const [key, timestamp] of oauthStates) {
-    if (timestamp < fiveMinutesAgo) oauthStates.delete(key);
+  for (const [key, data] of oauthStates) {
+    if (data.timestamp < fiveMinutesAgo) oauthStates.delete(key);
   }
 }
+
+function generateCodeVerifier(): string {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+function generateCodeChallenge(verifier: string): string {
+  return crypto.createHash("sha256").update(verifier).digest("base64url");
+}
+
+let lastCodeVerifier: string | null = null;
 
 function getRedirectUri(): string {
   const replitDomains = process.env.REPLIT_DOMAINS;
@@ -49,27 +59,40 @@ export function getAuthUrl(): { url: string; state: string } {
   cleanExpiredStates();
   const redirectUri = getRedirectUri();
   const state = crypto.randomBytes(16).toString("hex");
-  oauthStates.set(state, Date.now());
+  const codeVerifier = generateCodeVerifier();
+  const codeChallenge = generateCodeChallenge(codeVerifier);
+  oauthStates.set(state, { timestamp: Date.now(), codeVerifier });
+  lastCodeVerifier = codeVerifier;
   const scopeStr = SCOPES.join(" ");
-  const url = `https://login.xero.com/identity/connect/authorize?response_type=code&client_id=${XERO_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopeStr)}&state=${state}`;
+  const url = `https://login.xero.com/identity/connect/authorize?response_type=code&client_id=${XERO_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopeStr)}&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
   return { url, state };
 }
 
-export function validateOAuthState(state: string): boolean {
-  if (!state) return false;
+export function validateOAuthState(state: string): { valid: boolean; codeVerifier: string | null } {
+  if (!state) return { valid: false, codeVerifier: null };
   if (oauthStates.has(state)) {
+    const data = oauthStates.get(state)!;
     oauthStates.delete(state);
-    return true;
+    return { valid: true, codeVerifier: data.codeVerifier };
   }
-  console.log("OAuth state not found in memory (server may have restarted), allowing callback");
-  return true;
+  console.log("OAuth state not found in memory (server may have restarted), using last known verifier");
+  return { valid: true, codeVerifier: lastCodeVerifier };
 }
 
-export async function exchangeCodeForTokens(code: string): Promise<{
+export async function exchangeCodeForTokens(code: string, codeVerifier: string | null): Promise<{
   tenantId: string;
   tenantName: string;
 }> {
   const redirectUri = getRedirectUri();
+
+  const bodyParams: Record<string, string> = {
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: redirectUri,
+  };
+  if (codeVerifier) {
+    bodyParams.code_verifier = codeVerifier;
+  }
 
   const tokenResponse = await fetch("https://identity.xero.com/connect/token", {
     method: "POST",
@@ -77,11 +100,7 @@ export async function exchangeCodeForTokens(code: string): Promise<{
       "Content-Type": "application/x-www-form-urlencoded",
       Authorization: `Basic ${Buffer.from(`${XERO_CLIENT_ID}:${XERO_CLIENT_SECRET}`).toString("base64")}`,
     },
-    body: new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: redirectUri,
-    }),
+    body: new URLSearchParams(bodyParams),
   });
 
   if (!tokenResponse.ok) {

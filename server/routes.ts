@@ -81,11 +81,12 @@ export async function registerRoutes(
     if (!code) {
       return res.redirect("/xero?xero_error=Missing+authorization+code");
     }
-    if (!validateOAuthState(state)) {
+    const stateResult = validateOAuthState(state);
+    if (!stateResult.valid) {
       return res.redirect("/xero?xero_error=Invalid+OAuth+state");
     }
     try {
-      const result = await exchangeCodeForTokens(code);
+      const result = await exchangeCodeForTokens(code, stateResult.codeVerifier);
       console.log("Xero connected successfully:", result.tenantName);
       res.redirect(`/xero?xero_connected=true&tenant=${encodeURIComponent(result.tenantName)}`);
     } catch (err: any) {
