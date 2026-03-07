@@ -311,8 +311,7 @@ function CategorySection({ category, lines, months, currentMonth, categoryTotals
         <tr key={row.line.id} className="border-b border-dashed" data-testid={`row-line-${row.line.id}`}>
           <td className="sticky left-0 z-10 bg-background pl-10 pr-4 py-1.5">
             <div className="flex items-center gap-1.5">
-              <span className="text-xs text-muted-foreground font-mono">{row.line.code}</span>
-              <span className="text-sm">{row.line.name}</span>
+              <span className="text-xs">{row.line.name}</span>
               {row.line.lineType === "one_off" && <Badge variant="outline" className="text-[10px]">One-off</Badge>}
             </div>
           </td>
