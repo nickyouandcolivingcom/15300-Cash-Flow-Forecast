@@ -116,7 +116,27 @@ export default function XeroSettings() {
     },
   });
 
-  const isSyncing = importAccountsMutation.isPending || importTransactionsMutation.isPending || fullSyncMutation.isPending;
+  const importInvoicesMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/xero/import-invoices", { monthsBack: parseInt(monthsBack) });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/cashflow-lines"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/cashflow-grid"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
+      toast({
+        title: "Rent invoices imported",
+        description: `${data.tenantsCreated} tenancy lines created, ${data.actualsImported} monthly actuals imported. Total rent: £${data.totalMonthlyRent?.toLocaleString()}/month`,
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Invoice import failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const isSyncing = importAccountsMutation.isPending || importTransactionsMutation.isPending || fullSyncMutation.isPending || importInvoicesMutation.isPending;
 
   if (isLoading) {
     return (
@@ -262,10 +282,25 @@ export default function XeroSettings() {
                   )}
                   Full Sync
                 </Button>
+
+                <Button
+                  variant="secondary"
+                  onClick={() => importInvoicesMutation.mutate()}
+                  disabled={isSyncing}
+                  data-testid="button-import-invoices"
+                >
+                  {importInvoicesMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4 mr-1.5" />
+                  )}
+                  Import Rent Invoices
+                </Button>
               </div>
 
               <p className="text-xs text-muted-foreground">
                 Full Sync imports bank accounts, transactions, updates balances, and regenerates all forecasts.
+                Import Rent Invoices pulls invoices from Xero account 200 and creates individual tenancy lines with historical actuals.
               </p>
             </CardContent>
           </Card>

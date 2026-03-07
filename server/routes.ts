@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { eq } from "drizzle-orm";
 import { storage } from "./storage";
 import { generateForecasts, detectVariances, applyVarianceTreatment, getCurrentMonth, getNext12Months } from "./forecast-engine";
 import {
@@ -155,6 +156,203 @@ export async function registerRoutes(
       }));
       res.json({ count: invoices.length, invoices: summary });
     } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/xero/import-invoices", async (req, res) => {
+    try {
+      const monthsBack = req.body.monthsBack || 12;
+      const rawInvoices = await fetchXeroInvoices(monthsBack);
+
+      const rentInvoices = rawInvoices.filter((inv: any) =>
+        inv.LineItems && inv.LineItems.some((li: any) => li.AccountCode === "200")
+      );
+
+      function parseXeroDate(d: string): Date | null {
+        const m = d.match(/Date\((\d+)/);
+        return m ? new Date(parseInt(m[1])) : null;
+      }
+
+      const tenantMap: Record<string, {
+        contact: string;
+        teRef: string;
+        months: Record<string, number>;
+        latestRent: number;
+        latestMonth: string;
+        invoiceIds: string[];
+      }> = {};
+
+      for (const inv of rentInvoices) {
+        const contact = inv.Contact?.Name || "Unknown";
+        const dt = parseXeroDate(inv.Date);
+        if (!dt) continue;
+        const month = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
+
+        for (const li of (inv.LineItems || [])) {
+          if (li.AccountCode !== "200") continue;
+
+          const teMatch = (li.Description || "").match(/TE\d+/);
+          const teRef = teMatch ? teMatch[0] : "";
+          const key = contact;
+
+          if (!tenantMap[key]) {
+            tenantMap[key] = { contact, teRef, months: {}, latestRent: 0, latestMonth: "", invoiceIds: [] };
+          }
+
+          if (!tenantMap[key].months[month]) tenantMap[key].months[month] = 0;
+          tenantMap[key].months[month] += li.LineAmount;
+          tenantMap[key].invoiceIds.push(inv.InvoiceNumber);
+          if (teRef) tenantMap[key].teRef = teRef;
+
+          if (month >= tenantMap[key].latestMonth) {
+            tenantMap[key].latestMonth = month;
+            tenantMap[key].latestRent = li.LineAmount;
+          }
+        }
+      }
+
+      const currentMonth = getCurrentMonth();
+      const activeTenants = Object.entries(tenantMap)
+        .filter(([_, t]) => t.latestMonth >= currentMonth || t.latestMonth >= "2026-02")
+        .sort((a, b) => a[0].localeCompare(b[0]));
+
+      const { db: dbInstance } = await import("./db");
+      const {
+        cashflowLines: clTable,
+        forecastRules: frTable,
+        forecastMonths: fmTable,
+        actualTransactions: atTable,
+        varianceEvents: veTable,
+        overrides: orTable,
+      } = await import("@shared/schema");
+
+      const existingLines = await storage.getCashflowLines();
+      const revenueLines = existingLines.filter(l => l.category === "Rent Revenue" || l.category === "Revenue");
+      for (const line of revenueLines) {
+        await dbInstance.delete(fmTable).where(eq(fmTable.cashflowLineId, line.id));
+        await dbInstance.delete(frTable).where(eq(frTable.cashflowLineId, line.id));
+        await dbInstance.delete(veTable).where(eq(veTable.cashflowLineId, line.id));
+        await dbInstance.delete(orTable).where(eq(orTable.cashflowLineId, line.id));
+        await dbInstance.delete(atTable).where(eq(atTable.cashflowLineId, line.id));
+        await dbInstance.delete(clTable).where(eq(clTable.id, line.id));
+      }
+
+      const rollupLine = await storage.createCashflowLine({
+        code: "RENT-000",
+        name: "Rent Revenue (Total)",
+        category: "Rent Revenue",
+        subcategory: "Rollup",
+        direction: "inflow",
+        lineType: "recurring_fixed",
+        isRollup: true,
+        sortOrder: 0,
+        active: true,
+      });
+
+      let created = 0;
+      let actualsImported = 0;
+      const bankAccounts = await storage.getBankAccounts();
+      const santander = bankAccounts.find(a => a.name.toLowerCase().includes("santander"));
+      const defaultBankId = santander?.id || bankAccounts[0]?.id || 1;
+
+      for (let i = 0; i < activeTenants.length; i++) {
+        const [contactName, tenant] = activeTenants[i];
+        const shortName = contactName.replace(/\s*\(\d+\)\s*$/, "").trim();
+        const code = `RENT-${String(i + 1).padStart(3, "0")}`;
+
+        const line = await storage.createCashflowLine({
+          code,
+          name: `${shortName}`,
+          category: "Rent Revenue",
+          subcategory: tenant.teRef || undefined,
+          supplierName: contactName,
+          bankAccountId: defaultBankId,
+          direction: "inflow",
+          lineType: "recurring_fixed",
+          isRollup: false,
+          parentLineId: rollupLine.id,
+          sortOrder: i + 1,
+          active: true,
+        });
+
+        await storage.createForecastRule({
+          cashflowLineId: line.id,
+          recurrenceType: "monthly",
+          frequency: 1,
+          baseAmount: tenant.latestRent.toFixed(2),
+          startDate: "2026-03-01",
+          endDate: null,
+          upliftType: "none",
+          upliftValue: "0",
+          upliftFrequency: "annual",
+          paymentTimingRule: null,
+          timingFlexibility: "fixed",
+          forecastConfidence: "high",
+          active: true,
+        });
+
+        for (const [month, amount] of Object.entries(tenant.months)) {
+          const firstOfMonth = `${month}-01`;
+
+          await storage.createActualTransaction({
+            xeroTransactionId: `inv-rent-${tenant.teRef || shortName}-${month}`,
+            xeroSourceType: "invoice",
+            transactionDate: firstOfMonth,
+            amount: amount.toFixed(2),
+            description: `Rent - ${shortName} (${month})`,
+            supplierOrCounterparty: contactName,
+            bankAccountId: defaultBankId,
+            cashflowLineId: line.id,
+            mappedConfidence: "auto_xero",
+            mappingMethod: "xero_invoice",
+            reconciledFlag: true,
+          });
+          actualsImported++;
+
+          await storage.upsertForecastMonth({
+            cashflowLineId: line.id,
+            forecastMonth: month,
+            originalForecastAmount: tenant.latestRent.toFixed(2),
+            currentForecastAmount: tenant.latestRent.toFixed(2),
+            actualAmount: amount.toFixed(2),
+            sourceRuleId: null,
+            status: "actual",
+          });
+        }
+
+        created++;
+      }
+
+      await generateForecasts();
+
+      await storage.createAuditLog({
+        entityType: "invoice_import",
+        entityId: null,
+        action: "import_rent_invoices",
+        newValueJson: {
+          tenantsCreated: created,
+          actualsImported,
+          invoicesProcessed: rentInvoices.length,
+          monthsBack,
+        },
+        userName: "system",
+      });
+
+      res.json({
+        success: true,
+        tenantsCreated: created,
+        actualsImported,
+        totalMonthlyRent: activeTenants.reduce((sum, [_, t]) => sum + t.latestRent, 0),
+        tenants: activeTenants.map(([name, t]) => ({
+          name: name.replace(/\s*\(\d+\)\s*$/, ""),
+          teRef: t.teRef,
+          currentRent: t.latestRent,
+          historicalMonths: Object.keys(t.months).length,
+        })),
+      });
+    } catch (err: any) {
+      console.error("Invoice import error:", err);
       res.status(500).json({ message: err.message });
     }
   });
