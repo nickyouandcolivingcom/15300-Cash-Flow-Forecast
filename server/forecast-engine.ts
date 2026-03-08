@@ -77,24 +77,34 @@ function calculateUplift(
   month: string
 ): number {
   const baseAmount = parseFloat(rule.baseAmount as string) || 0;
-  if (rule.upliftType === "none" || !rule.upliftValue) return baseAmount;
 
-  const upliftVal = parseFloat(rule.upliftValue as string) || 0;
-  const [ruleStartYear] = (rule.startDate as string).substring(0, 7).split("-").map(Number);
-  const [targetYear] = month.split("-").map(Number);
-  const yearsDiff = targetYear - ruleStartYear;
+  let amount = baseAmount;
+  if (rule.upliftType !== "none" && rule.upliftValue) {
+    const upliftVal = parseFloat(rule.upliftValue as string) || 0;
+    const [ruleStartYear] = (rule.startDate as string).substring(0, 7).split("-").map(Number);
+    const [targetYear] = month.split("-").map(Number);
+    const yearsDiff = targetYear - ruleStartYear;
 
-  if (yearsDiff <= 0) return baseAmount;
-
-  const periods = rule.upliftFrequency === "annual" ? yearsDiff : Math.floor(yearsDiff / 2);
-
-  if (rule.upliftType === "percentage") {
-    return baseAmount * Math.pow(1 + upliftVal / 100, periods);
-  } else if (rule.upliftType === "fixed") {
-    return baseAmount + (upliftVal * periods);
+    if (yearsDiff > 0) {
+      const periods = rule.upliftFrequency === "annual" ? yearsDiff : Math.floor(yearsDiff / 2);
+      if (rule.upliftType === "percentage") {
+        amount = baseAmount * Math.pow(1 + upliftVal / 100, periods);
+      } else if (rule.upliftType === "fixed") {
+        amount = baseAmount + (upliftVal * periods);
+      }
+    }
   }
 
-  return baseAmount;
+  if (rule.monthlyVolumes) {
+    const volumes = rule.monthlyVolumes as Record<string, number>;
+    const monthNum = parseInt(month.split("-")[1]);
+    const monthNames = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"];
+    const key = monthNames[monthNum - 1];
+    const volume = volumes[key] ?? 1;
+    amount = amount * volume;
+  }
+
+  return amount;
 }
 
 export async function generateForecasts(): Promise<void> {

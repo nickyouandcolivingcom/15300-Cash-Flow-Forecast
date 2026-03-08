@@ -96,6 +96,7 @@ export const forecastRules = pgTable("forecast_rules", {
   paymentTimingRule: text("payment_timing_rule"),
   timingFlexibility: text("timing_flexibility").default("fixed"),
   forecastConfidence: text("forecast_confidence").default("high"),
+  monthlyVolumes: jsonb("monthly_volumes"),
   active: boolean("active").default(true),
 });
 
