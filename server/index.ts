@@ -70,10 +70,7 @@ app.use((req, res, next) => {
   app.use("/api", (req, res, next) => {
     if (
       req.path.startsWith("/auth/") ||
-      req.path === "/xero/callback" ||
-      req.path === "/data-export" ||
-      req.path === "/data-import" ||
-      req.path === "/data-fix"
+      req.path === "/xero/callback"
     ) {
       return next();
     }
