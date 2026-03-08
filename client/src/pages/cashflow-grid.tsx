@@ -322,6 +322,7 @@ function CategorySection({ category, lines, months, currentMonth, categoryTotals
               {row.recurrenceType === "annual" && <Badge variant="outline" className="text-[10px]">Annual</Badge>}
               {row.recurrenceType === "semi_annual" && <Badge variant="outline" className="text-[10px]">Semi-annual</Badge>}
               {row.recurrenceType === "quarterly" && <Badge variant="outline" className="text-[10px]">Quarterly</Badge>}
+              {row.recurrenceType === "quadrimestral" && <Badge variant="outline" className="text-[10px]">Periodic</Badge>}
             </div>
           </td>
           <td className="text-center text-xs text-muted-foreground px-1 py-1.5 tabular-nums">

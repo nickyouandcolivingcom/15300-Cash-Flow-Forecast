@@ -59,6 +59,8 @@ function shouldApplyRecurrence(
       return true;
     case "quarterly":
       return monthsDiff % 3 === 0;
+    case "quadrimestral":
+      return monthsDiff % 4 === 0;
     case "semi_annual":
       return monthsDiff % 6 === 0;
     case "annual":
