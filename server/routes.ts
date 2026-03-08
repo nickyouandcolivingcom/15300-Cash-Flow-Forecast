@@ -1144,6 +1144,9 @@ export async function registerRoutes(
   });
 
   app.get("/api/dashboard", async (_req, res) => {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.set("Pragma", "no-cache");
+    res.set("Expires", "0");
     const currentMonth = getCurrentMonth();
     const months = getNext12Months(currentMonth);
     const lines = await storage.getCashflowLines();
@@ -1155,9 +1158,11 @@ export async function registerRoutes(
     const openingBalanceTotal = snapshot ? parseFloat(snapshot.balance as string) : 0;
 
     const activeBankAccounts = bankAccountsList.filter(ba => ba.active);
+    console.log("Dashboard bank balances:", JSON.stringify(activeBankAccounts.map(ba => ({ name: ba.name, balance: ba.currentBalance }))));
     const currentCashPosition = activeBankAccounts.reduce(
       (sum, ba) => sum + (parseFloat(ba.currentBalance as string) || 0), 0
     );
+    console.log("Dashboard currentCashPosition:", currentCashPosition);
     const lastActualDate = new Date().toISOString().split("T")[0];
 
     let runningCash = openingBalanceTotal;
