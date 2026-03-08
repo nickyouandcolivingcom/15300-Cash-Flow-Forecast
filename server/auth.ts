@@ -35,6 +35,8 @@ declare global {
 }
 
 export function setupAuth(app: Express): void {
+  app.set("trust proxy", 1);
+
   const PgStore = connectPg(session);
   const sessionStore = new PgStore({
     pool,
