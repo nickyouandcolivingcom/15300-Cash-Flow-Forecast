@@ -8,6 +8,8 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 
 interface DashboardData {
   currentCashPosition: number;
+  lastActualDate: string | null;
+  openingBalanceTotal: number;
   freeCashFlow: number;
   totalInflow: number;
   totalOutflow: number;
@@ -136,18 +138,21 @@ export default function Dashboard() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base font-medium">Current Cash Position</CardTitle>
+            {data.lastActualDate && (
+              <p className="text-[10px] text-muted-foreground" data-testid="text-as-of-date">
+                As of {new Date(data.lastActualDate + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
+              </p>
+            )}
           </CardHeader>
-          <CardContent className="space-y-4">
-            {data.bankAccounts.map((account) => (
-              <div key={account.id} className="flex items-center justify-between gap-2" data-testid={`card-bank-account-${account.id}`}>
-                <p className="text-sm text-muted-foreground">{account.name}</p>
-                <p className="text-sm font-medium tabular-nums text-right">{formatCurrency(account.currentBalance)}</p>
-              </div>
-            ))}
-            <div className="border-t pt-3 mt-3">
+          <CardContent className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">Opening balance (1st)</p>
+              <p className="text-xs tabular-nums text-right text-muted-foreground">{formatCurrency(data.openingBalanceTotal)}</p>
+            </div>
+            <div className="border-t pt-3">
               <div className="flex items-center justify-between gap-1">
-                <p className="text-sm font-medium">Total</p>
-                <p className="text-lg font-bold tabular-nums text-right">{formatCurrency(data.currentCashPosition)}</p>
+                <p className="text-sm font-medium">Position</p>
+                <p className="text-lg font-bold tabular-nums text-right" data-testid="text-cash-position">{formatCurrency(data.currentCashPosition)}</p>
               </div>
             </div>
           </CardContent>

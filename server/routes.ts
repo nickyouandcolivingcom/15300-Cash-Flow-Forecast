@@ -9,6 +9,7 @@ import {
   insertActualTransactionSchema,
   insertForecastRuleSchema,
   insertOverrideSchema,
+  insertCashBalanceSnapshotSchema,
 } from "@shared/schema";
 import {
   getAuthUrl,
@@ -854,6 +855,19 @@ export async function registerRoutes(
     res.json({ success: true });
   });
 
+  app.get("/api/cash-snapshots", async (_req, res) => {
+    const snapshots = await storage.getSnapshots();
+    res.json(snapshots);
+  });
+
+  app.post("/api/cash-snapshots", async (req, res) => {
+    const parsed = insertCashBalanceSnapshotSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: parsed.error.message });
+    const snap = await storage.createSnapshot(parsed.data);
+    await storage.createAuditLog({ entityType: "cash_snapshot", entityId: snap.id, action: "create", newValueJson: snap });
+    res.json(snap);
+  });
+
   app.get("/api/forecast-months", async (req, res) => {
     const filters: any = {};
     if (req.query.cashflowLineId) filters.cashflowLineId = parseInt(req.query.cashflowLineId as string);
@@ -929,7 +943,20 @@ export async function registerRoutes(
     const currentMonthTransactions = await storage.getTransactionsByMonth(currentMonth);
     const allRules = await storage.getForecastRules();
 
-    const totalBalance = bankAccountsList.reduce((sum, a) => sum + (parseFloat(a.currentBalance as string) || 0), 0);
+    const snapshot = await storage.getLatestSnapshot(currentMonth + "-01");
+    const openingBalanceTotal = snapshot ? parseFloat(snapshot.balance as string) : 0;
+
+    const allTransactions = await storage.getActualTransactions({
+      startDate: currentMonth + "-01",
+      endDate: currentMonth + "-31",
+    });
+    const today = new Date().toISOString().split("T")[0];
+    const actualsToYesterday = allTransactions.filter(t => String(t.transactionDate) < today);
+    const actualsNetToYesterday = actualsToYesterday.reduce((sum, t) => sum + (parseFloat(t.amount as string) || 0), 0);
+    const currentCashPosition = openingBalanceTotal + actualsNetToYesterday;
+    const lastActualDate = actualsToYesterday.length > 0
+      ? actualsToYesterday.reduce((max, t) => String(t.transactionDate) > max ? String(t.transactionDate) : max, "")
+      : null;
 
     const propDevOrder = ["16RC", "10KG", "32LFR", "84DD", "4WS", "26BLA", "26BLB", "26BLC", "27BLA", "27BLB", "27BLC", "27BLD", "26BL", "27BL"];
     const getOutflowSortKey = (name: string) => {
@@ -1053,7 +1080,7 @@ export async function registerRoutes(
       }
     }
 
-    let runningCash = totalBalance;
+    let runningCash = openingBalanceTotal;
     const closingCash: Record<string, number> = {};
     const openingCash: Record<string, number> = {};
     for (const month of months) {
@@ -1073,7 +1100,9 @@ export async function registerRoutes(
       netTotals,
       openingCash,
       closingCash,
-      totalBalance,
+      currentCashPosition,
+      lastActualDate,
+      openingBalanceTotal,
       bankAccounts: bankAccountsList,
     });
   });
@@ -1086,9 +1115,22 @@ export async function registerRoutes(
     const bankAccountsList = await storage.getBankAccounts();
     const variances = await storage.getVarianceEvents();
 
-    const totalBalance = bankAccountsList.reduce((sum, a) => sum + (parseFloat(a.currentBalance as string) || 0), 0);
+    const snapshot = await storage.getLatestSnapshot(currentMonth + "-01");
+    const openingBalanceTotal = snapshot ? parseFloat(snapshot.balance as string) : 0;
 
-    let runningCash = totalBalance;
+    const allMonthTx = await storage.getActualTransactions({
+      startDate: currentMonth + "-01",
+      endDate: currentMonth + "-31",
+    });
+    const today = new Date().toISOString().split("T")[0];
+    const actualsToYesterday = allMonthTx.filter(t => String(t.transactionDate) < today);
+    const actualsNetToYesterday = actualsToYesterday.reduce((sum, t) => sum + (parseFloat(t.amount as string) || 0), 0);
+    const currentCashPosition = openingBalanceTotal + actualsNetToYesterday;
+    const lastActualDate = actualsToYesterday.length > 0
+      ? actualsToYesterday.reduce((max, t) => String(t.transactionDate) > max ? String(t.transactionDate) : max, "")
+      : null;
+
+    let runningCash = openingBalanceTotal;
     const cashTrend: { month: string; closing: number; inflow: number; outflow: number }[] = [];
 
     for (const month of months) {
@@ -1100,7 +1142,7 @@ export async function registerRoutes(
         if (line.direction === "inflow") monthInflow += amount;
         else monthOutflow += amount;
       }
-      const net = monthInflow - monthOutflow;
+      const net = monthInflow + monthOutflow;
       runningCash += net;
       cashTrend.push({ month, closing: runningCash, inflow: monthInflow, outflow: monthOutflow });
     }
@@ -1108,10 +1150,12 @@ export async function registerRoutes(
     const pendingVariances = variances.filter(v => !v.approvedTreatment).length;
     const totalInflow = cashTrend.reduce((sum, t) => sum + t.inflow, 0);
     const totalOutflow = cashTrend.reduce((sum, t) => sum + t.outflow, 0);
-    const freeCashFlow = totalInflow - totalOutflow;
+    const freeCashFlow = totalInflow + totalOutflow;
 
     res.json({
-      currentCashPosition: totalBalance,
+      currentCashPosition,
+      lastActualDate,
+      openingBalanceTotal,
       freeCashFlow,
       totalInflow,
       totalOutflow,

@@ -9,6 +9,7 @@ import {
   varianceEvents, type InsertVarianceEvent, type VarianceEvent,
   overrides, type InsertOverride, type Override,
   auditLog, type InsertAuditLog, type AuditLog,
+  cashBalanceSnapshots, type InsertCashBalanceSnapshot, type CashBalanceSnapshot,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -51,6 +52,10 @@ export interface IStorage {
 
   getAuditLogs(filters?: { entityType?: string; entityId?: number; limit?: number }): Promise<AuditLog[]>;
   createAuditLog(data: InsertAuditLog): Promise<AuditLog>;
+
+  getLatestSnapshot(beforeDate?: string): Promise<CashBalanceSnapshot | undefined>;
+  createSnapshot(data: InsertCashBalanceSnapshot): Promise<CashBalanceSnapshot>;
+  getSnapshots(): Promise<CashBalanceSnapshot[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -254,6 +259,25 @@ export class DatabaseStorage implements IStorage {
   async createAuditLog(data: InsertAuditLog): Promise<AuditLog> {
     const [result] = await db.insert(auditLog).values(data).returning();
     return result;
+  }
+
+  async getLatestSnapshot(beforeDate?: string): Promise<CashBalanceSnapshot | undefined> {
+    const conditions = [eq(cashBalanceSnapshots.source, "opening")];
+    if (beforeDate) conditions.push(lte(cashBalanceSnapshots.snapshotDate, beforeDate));
+    const [result] = await db.select().from(cashBalanceSnapshots)
+      .where(and(...conditions))
+      .orderBy(desc(cashBalanceSnapshots.snapshotDate))
+      .limit(1);
+    return result;
+  }
+
+  async createSnapshot(data: InsertCashBalanceSnapshot): Promise<CashBalanceSnapshot> {
+    const [result] = await db.insert(cashBalanceSnapshots).values(data).returning();
+    return result;
+  }
+
+  async getSnapshots(): Promise<CashBalanceSnapshot[]> {
+    return db.select().from(cashBalanceSnapshots).orderBy(desc(cashBalanceSnapshots.snapshotDate));
   }
 }
 

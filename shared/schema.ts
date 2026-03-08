@@ -180,6 +180,19 @@ export const insertAuditLogSchema = createInsertSchema(auditLog).omit({
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
 export type AuditLog = typeof auditLog.$inferSelect;
 
+export const cashBalanceSnapshots = pgTable("cash_balance_snapshots", {
+  id: serial("id").primaryKey(),
+  snapshotDate: date("snapshot_date").notNull(),
+  bankAccountId: integer("bank_account_id"),
+  balance: decimal("balance", { precision: 15, scale: 2 }).notNull(),
+  source: text("source").default("manual"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertCashBalanceSnapshotSchema = createInsertSchema(cashBalanceSnapshots).omit({ id: true, createdAt: true });
+export type InsertCashBalanceSnapshot = z.infer<typeof insertCashBalanceSnapshotSchema>;
+export type CashBalanceSnapshot = typeof cashBalanceSnapshots.$inferSelect;
+
 export const xeroTokens = pgTable("xero_tokens", {
   id: serial("id").primaryKey(),
   tenantId: text("tenant_id").notNull(),
