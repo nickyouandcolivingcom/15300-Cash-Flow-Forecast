@@ -176,12 +176,6 @@ export default function CashFlowGrid() {
             <Badge variant="outline" className="text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-900 dark:text-blue-100 border-blue-300 dark:border-blue-700 font-semibold">
               Actual
             </Badge>
-            <Badge variant="outline" className="text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-100 border-amber-300 dark:border-amber-700 font-semibold">
-              Override
-            </Badge>
-            <Badge variant="outline" className="text-xs bg-orange-100 dark:bg-orange-900/40 text-orange-900 dark:text-orange-100 border-orange-300 dark:border-orange-700 font-semibold">
-              Variance
-            </Badge>
             <Badge variant="outline" className="text-xs text-muted-foreground font-normal">
               Forecast
             </Badge>
