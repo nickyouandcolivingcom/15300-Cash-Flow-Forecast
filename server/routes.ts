@@ -1013,21 +1013,26 @@ export async function registerRoutes(
           : fcActual;
 
         let displayAmount: number;
+        let displayStatus: string;
         if (isCurrentMonth) {
           if (lineCurrentTx.length > 0) {
             displayAmount = currentMonthActual;
+            displayStatus = "actual";
           } else if (fcActual !== null) {
             displayAmount = fcActual;
+            displayStatus = "actual";
           } else {
             displayAmount = fc ? parseFloat(fc.currentForecastAmount as string) || 0 : 0;
+            displayStatus = "forecast";
           }
         } else {
           displayAmount = fc ? parseFloat(fc.currentForecastAmount as string) || 0 : 0;
+          displayStatus = fc?.status || "forecast";
         }
 
         monthData[month] = {
           amount: displayAmount,
-          status: isCurrentMonth ? "actual" : (fc?.status || "forecast"),
+          status: displayStatus,
           hasOverride: !!ov,
           hasVariance: !!va,
           originalForecast: fc ? parseFloat(fc.originalForecastAmount as string) || 0 : 0,

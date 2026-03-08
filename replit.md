@@ -17,11 +17,13 @@ A rolling 13-month cash flow forecasting web app for YOU & CO. LIVING LIMITED, a
 - `forecast_months` - Generated monthly forecast values (13-month window)
 - `variance_events` - Actual vs forecast comparisons with treatment classifications
 - `overrides` - Manual forecast overrides
+- `cash_balance_snapshots` - Opening balance snapshots (anchor for cash position calculations)
 - `audit_log` - Complete audit trail of all changes
 - `xero_tokens` - OAuth 2.0 token storage for Xero API
 
 ## Key Features
 - Rolling 13-month cash flow grid (current month actual + 12 forecast months)
+- Dynamic current cash position = opening balance + actuals through last completed day
 - 41 individual tenancy revenue lines from Xero invoices (account 200)
 - 75 supplier outflow lines from bank transaction data (one line per supplier)
 - Dashboard with charts showing cash trend and monthly flows
