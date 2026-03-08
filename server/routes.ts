@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { eq } from "drizzle-orm";
 import { storage } from "./storage";
-import { generateForecasts, detectVariances, applyVarianceTreatment, getCurrentMonth, getNext12Months } from "./forecast-engine";
+import { generateForecasts, detectVariances, applyVarianceTreatment, reconcileCurrentMonth, getCurrentMonth, getNext12Months } from "./forecast-engine";
 import {
   insertBankAccountSchema,
   insertCashflowLineSchema,
@@ -113,7 +113,8 @@ export async function registerRoutes(
     try {
       const monthsBack = req.body.monthsBack || 3;
       const result = await importBankTransactions(monthsBack);
-      res.json({ success: true, ...result });
+      const reconciliation = await reconcileCurrentMonth();
+      res.json({ success: true, ...result, reconciliation });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -886,6 +887,22 @@ export async function registerRoutes(
     const month = (req.body.month as string) || getCurrentMonth();
     await detectVariances(month);
     res.json({ success: true, message: `Variances detected for ${month}` });
+  });
+
+  app.post("/api/forecast/reconcile", async (_req, res) => {
+    const result = await reconcileCurrentMonth();
+    await storage.createAuditLog({
+      entityType: "reconciliation",
+      entityId: 0,
+      action: "reconcile",
+      newValueJson: {
+        matched: result.matched,
+        variances: result.variances.length,
+        missing: result.missing.length,
+        unmapped: result.unmapped,
+      },
+    });
+    res.json({ success: true, ...result });
   });
 
   app.get("/api/variances", async (req, res) => {

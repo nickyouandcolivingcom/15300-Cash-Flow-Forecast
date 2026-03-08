@@ -30,6 +30,10 @@ A rolling 13-month cash flow forecasting web app for YOU & CO. LIVING LIMITED, a
 - Forecast rules engine (monthly, quarterly, quadrimestral, annual, one-off recurrence)
 - Monthly volume profiles for variable-volume lines (e.g. TDS deposits: 1/month, 2 in Jul-Sep)
 - Variance detection and classification (timing, permanent, one-off)
+- Automatic reconciliation after Xero sync (POST /api/forecast/reconcile)
+  - Matches actuals to forecasts for lines with transactions through yesterday
+  - Sets actual=0 for lines whose due day has passed with no transaction
+  - Reports matched count, variances (amount differences), missing (no charge), unmapped
 - Xero OAuth 2.0 integration with PKCE flow
 - Full audit trail
 

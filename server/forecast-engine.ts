@@ -254,4 +254,73 @@ export async function detectVariances(month: string): Promise<void> {
   }
 }
 
+export async function reconcileCurrentMonth(): Promise<{
+  matched: number;
+  variances: { name: string; forecast: number; actual: number; diff: number }[];
+  missing: { name: string; dueDay: number; forecast: number }[];
+  unmapped: number;
+}> {
+  const currentMonth = getCurrentMonth();
+  const today = new Date();
+  const currentDay = today.getDate();
+
+  const lines = await storage.getCashflowLines();
+  const activeLines = lines.filter(l => l.active && !l.isRollup);
+  const forecasts = await storage.getForecastMonths({ startMonth: currentMonth, endMonth: currentMonth });
+  const transactions = await storage.getTransactionsByMonth(currentMonth);
+
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().split("T")[0];
+
+  const completedTx = transactions.filter(t => String(t.transactionDate) <= yesterdayStr);
+
+  const txByLine: Record<number, number> = {};
+  let unmapped = 0;
+  for (const tx of completedTx) {
+    if (tx.cashflowLineId) {
+      txByLine[tx.cashflowLineId] = (txByLine[tx.cashflowLineId] || 0) + (parseFloat(tx.amount as string) || 0);
+    } else {
+      unmapped++;
+    }
+  }
+
+  let matched = 0;
+  const variances: { name: string; forecast: number; actual: number; diff: number }[] = [];
+  const missing: { name: string; dueDay: number; forecast: number }[] = [];
+
+  for (const line of activeLines) {
+    const dueDay = line.dueDay ?? 99;
+    const forecast = forecasts.find(f => f.cashflowLineId === line.id);
+    const forecastAmt = forecast ? parseFloat(forecast.currentForecastAmount as string) || 0 : 0;
+    const actualAmt = txByLine[line.id] ?? 0;
+    const hasTx = line.id in txByLine;
+
+    if (hasTx) {
+      if (forecast) {
+        await storage.updateForecastMonth(forecast.id, {
+          actualAmount: actualAmt.toFixed(2),
+          status: "actual",
+        });
+      }
+      const diff = actualAmt - forecastAmt;
+      if (Math.abs(diff) < 0.02) {
+        matched++;
+      } else {
+        variances.push({ name: line.name, forecast: forecastAmt, actual: actualAmt, diff });
+      }
+    } else if (dueDay < currentDay && forecastAmt !== 0) {
+      if (forecast) {
+        await storage.updateForecastMonth(forecast.id, {
+          actualAmount: "0",
+          status: "actual",
+        });
+      }
+      missing.push({ name: line.name, dueDay, forecast: forecastAmt });
+    }
+  }
+
+  return { matched, variances, missing, unmapped };
+}
+
 export { getCurrentMonth, getNext12Months };
