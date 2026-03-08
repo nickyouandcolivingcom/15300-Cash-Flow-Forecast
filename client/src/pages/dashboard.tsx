@@ -150,17 +150,15 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent className="space-y-4">
             {data.bankAccounts.map((account) => (
-              <div key={account.id} className="space-y-1" data-testid={`card-bank-account-${account.id}`}>
-                <div className="flex items-center justify-between gap-1">
-                  <p className="text-sm font-medium">{account.name}</p>
-                </div>
-                <p className="text-lg font-semibold">{formatCurrency(account.currentBalance)}</p>
+              <div key={account.id} className="flex items-center justify-between gap-2" data-testid={`card-bank-account-${account.id}`}>
+                <p className="text-sm font-medium">{account.name}</p>
+                <p className="text-lg font-semibold tabular-nums text-right">{formatCurrency(account.currentBalance)}</p>
               </div>
             ))}
             <div className="border-t pt-3 mt-3">
               <div className="flex items-center justify-between gap-1">
                 <p className="text-sm font-medium">Total</p>
-                <p className="text-lg font-bold">{formatCurrency(data.currentCashPosition)}</p>
+                <p className="text-lg font-bold tabular-nums text-right">{formatCurrency(data.currentCashPosition)}</p>
               </div>
             </div>
           </CardContent>
