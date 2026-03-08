@@ -116,6 +116,7 @@ export async function generateForecasts(): Promise<void> {
 
   for (const line of lines) {
     if (!line.active || line.isRollup) continue;
+    if (line.code === "RENT-PRE") continue;
 
     const lineRules = allRules.filter(r => r.cashflowLineId === line.id && r.active);
     const lineOverrides = allOverrides.filter(o => o.cashflowLineId === line.id);
@@ -213,6 +214,7 @@ export async function detectVariances(month: string): Promise<void> {
 
   for (const line of lines) {
     if (!line.active || line.isRollup) continue;
+    if (line.code === "RENT-PRE") continue;
 
     const forecast = forecasts.find(f => f.cashflowLineId === line.id);
     const lineTransactions = transactions.filter(t => t.cashflowLineId === line.id);
@@ -290,6 +292,7 @@ export async function reconcileCurrentMonth(): Promise<{
   const missing: { name: string; dueDay: number; forecast: number }[] = [];
 
   for (const line of activeLines) {
+    if (line.code === "RENT-PRE") continue;
     const dueDay = line.dueDay ?? 99;
     const forecast = forecasts.find(f => f.cashflowLineId === line.id);
     const forecastAmt = forecast ? parseFloat(forecast.currentForecastAmount as string) || 0 : 0;

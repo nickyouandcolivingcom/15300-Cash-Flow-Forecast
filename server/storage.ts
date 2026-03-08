@@ -222,8 +222,14 @@ export class DatabaseStorage implements IStorage {
         eq(forecastMonths.forecastMonth, data.forecastMonth)
       ));
     if (existing.length > 0) {
+      const updateData: Record<string, any> = {};
+      for (const [key, value] of Object.entries(data)) {
+        if (value !== undefined) {
+          updateData[key] = value;
+        }
+      }
       const [result] = await db.update(forecastMonths)
-        .set(data)
+        .set(updateData)
         .where(eq(forecastMonths.id, existing[0].id))
         .returning();
       return result;
