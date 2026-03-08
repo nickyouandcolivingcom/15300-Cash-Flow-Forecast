@@ -137,6 +137,22 @@ export function setupAuth(app: Express): void {
       res.json({ id: user.id, username: user.username });
     });
   });
+
+  app.post("/api/auth/reset-account", async (req, res) => {
+    const { username } = req.body;
+    if (!username) {
+      return res.status(400).json({ message: "Username required" });
+    }
+    const user = await storage.getUserByUsername(username);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    const { db: dbConn } = await import("./db");
+    const { users: usersTable } = await import("@shared/schema");
+    const { eq } = await import("drizzle-orm");
+    await dbConn.delete(usersTable).where(eq(usersTable.id, user.id));
+    res.json({ message: "Account reset. You can now create a new account." });
+  });
 }
 
 export const requireAuth: RequestHandler = (req, res, next) => {
