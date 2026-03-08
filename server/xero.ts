@@ -44,6 +44,7 @@ const SCOPES = [
   "accounting.invoices.read",
   "accounting.settings.read",
   "accounting.contacts.read",
+  "accounting.reports.read",
   "offline_access",
 ];
 
@@ -221,6 +222,48 @@ export async function isXeroConnected(): Promise<{ connected: boolean; tenantNam
   return { connected: true, tenantName: token?.tenantName || undefined };
 }
 
+export async function fetchBankBalances(): Promise<{ totalBalance: number; accounts: { name: string; balance: number }[] }> {
+  const today = new Date().toISOString().split("T")[0];
+  const reportData = await xeroApiGet(
+    `Reports/BankSummary?fromDate=${today}&toDate=${today}`
+  );
+
+  const existingAccounts = await storage.getBankAccounts();
+  const result: { name: string; balance: number }[] = [];
+  let totalBalance = 0;
+
+  const report = reportData.Reports?.[0];
+  if (report?.Rows) {
+    for (const section of report.Rows) {
+      if (section.RowType === "Section" && section.Rows) {
+        for (const row of section.Rows) {
+          if (row.RowType === "Row" && row.Cells) {
+            const accountName = row.Cells[0]?.Value || "";
+            const closingBalance = parseFloat(row.Cells[3]?.Value || "0");
+
+            const match = existingAccounts.find(e =>
+              e.active && accountName.toUpperCase().includes(e.name.toUpperCase().replace(" ACCOUNT", "").replace("BUSINESS", "").trim())
+            ) || existingAccounts.find(e =>
+              e.active && e.name.toUpperCase().includes(accountName.split(" ")[0].toUpperCase())
+            );
+
+            if (match) {
+              result.push({ name: match.name, balance: closingBalance });
+              totalBalance += closingBalance;
+              await storage.updateBankAccount(match.id, {
+                currentBalance: closingBalance.toFixed(2),
+              });
+              console.log(`Updated ${match.name} balance from Xero Bank Summary: £${closingBalance.toFixed(2)}`);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return { totalBalance, accounts: result };
+}
+
 export async function importBankAccounts(): Promise<{ imported: number; skipped: number; errors: string[] }> {
   const data = await xeroApiGet("Accounts?where=Type%3D%3D%22BANK%22");
   const accounts = data.Accounts || [];
@@ -372,18 +415,6 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
       }
     }
 
-    try {
-      const allTx = await storage.getActualTransactions({ bankAccountId: ba.id });
-      if (allTx.length > 0) {
-        const totalBalance = allTx.reduce((sum, t) => sum + parseFloat(t.amount), 0);
-        await storage.updateBankAccount(ba.id, {
-          currentBalance: String(Math.round(totalBalance * 100) / 100),
-        });
-        console.log(`Updated ${ba.name} balance from transactions: ${totalBalance.toFixed(2)}`);
-      }
-    } catch (err: any) {
-      errors.push(`Balance calculation failed for ${ba.name}: ${err.message}`);
-    }
   }
 
   await storage.createAuditLog({

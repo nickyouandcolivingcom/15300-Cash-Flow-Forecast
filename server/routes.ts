@@ -22,6 +22,7 @@ import {
   fetchXeroInvoices,
   fetchXeroInvoicesWithPayments,
   fetchXeroBankTransactionsForContact,
+  fetchBankBalances,
 } from "./xero";
 
 async function updateActualsForMonth(month: string): Promise<void> {
@@ -114,7 +115,13 @@ export async function registerRoutes(
       const monthsBack = req.body.monthsBack || 3;
       const result = await importBankTransactions(monthsBack);
       const reconciliation = await reconcileCurrentMonth();
-      res.json({ success: true, ...result, reconciliation });
+      let bankBalances;
+      try {
+        bankBalances = await fetchBankBalances();
+      } catch (e: any) {
+        console.error("Failed to fetch bank balances:", e.message);
+      }
+      res.json({ success: true, ...result, reconciliation, bankBalances });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -963,18 +970,11 @@ export async function registerRoutes(
     const snapshot = await storage.getLatestSnapshot(currentMonth + "-01");
     const openingBalanceTotal = snapshot ? parseFloat(snapshot.balance as string) : 0;
 
-    const allTransactions = await storage.getActualTransactions({
-      startDate: currentMonth + "-01",
-      endDate: currentMonth + "-31",
-    });
-    const today = new Date().toISOString().split("T")[0];
-    const bankOnlyTx = allTransactions.filter(t => t.xeroSourceType !== "invoice");
-    const actualsToYesterday = bankOnlyTx.filter(t => String(t.transactionDate) < today);
-    const actualsNetToYesterday = actualsToYesterday.reduce((sum, t) => sum + (parseFloat(t.amount as string) || 0), 0);
-    const currentCashPosition = openingBalanceTotal + actualsNetToYesterday;
-    const lastActualDate = actualsToYesterday.length > 0
-      ? actualsToYesterday.reduce((max, t) => String(t.transactionDate) > max ? String(t.transactionDate) : max, "")
-      : null;
+    const activeBankAccounts = bankAccountsList.filter(ba => ba.active);
+    const currentCashPosition = activeBankAccounts.reduce(
+      (sum, ba) => sum + (parseFloat(ba.currentBalance as string) || 0), 0
+    );
+    const lastActualDate = new Date().toISOString().split("T")[0];
 
     const propDevOrder = ["16RC", "10KG", "32LFR", "84DD", "4WS", "26BLA", "26BLB", "26BLC", "27BLA", "27BLB", "27BLC", "27BLD", "26BL", "27BL"];
     const getOutflowSortKey = (name: string) => {
@@ -1141,18 +1141,11 @@ export async function registerRoutes(
     const snapshot = await storage.getLatestSnapshot(currentMonth + "-01");
     const openingBalanceTotal = snapshot ? parseFloat(snapshot.balance as string) : 0;
 
-    const allMonthTx = await storage.getActualTransactions({
-      startDate: currentMonth + "-01",
-      endDate: currentMonth + "-31",
-    });
-    const today = new Date().toISOString().split("T")[0];
-    const bankOnlyTx = allMonthTx.filter(t => t.xeroSourceType !== "invoice");
-    const actualsToYesterday = bankOnlyTx.filter(t => String(t.transactionDate) < today);
-    const actualsNetToYesterday = actualsToYesterday.reduce((sum, t) => sum + (parseFloat(t.amount as string) || 0), 0);
-    const currentCashPosition = openingBalanceTotal + actualsNetToYesterday;
-    const lastActualDate = actualsToYesterday.length > 0
-      ? actualsToYesterday.reduce((max, t) => String(t.transactionDate) > max ? String(t.transactionDate) : max, "")
-      : null;
+    const activeBankAccounts = bankAccountsList.filter(ba => ba.active);
+    const currentCashPosition = activeBankAccounts.reduce(
+      (sum, ba) => sum + (parseFloat(ba.currentBalance as string) || 0), 0
+    );
+    const lastActualDate = new Date().toISOString().split("T")[0];
 
     let runningCash = openingBalanceTotal;
     const cashTrend: { month: string; closing: number; inflow: number; outflow: number }[] = [];
