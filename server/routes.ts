@@ -1037,7 +1037,7 @@ export async function registerRoutes(
         } else {
           outflowTotals[month] += amount;
         }
-        netTotals[month] += row.line.direction === "inflow" ? amount : -amount;
+        netTotals[month] += amount;
       }
     }
 
