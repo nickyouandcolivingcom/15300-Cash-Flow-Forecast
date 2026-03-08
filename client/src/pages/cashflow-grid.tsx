@@ -61,19 +61,21 @@ function CellValue({ value, status, hasOverride, hasVariance, isNegative }: {
   let className = "text-right text-xs tabular-nums whitespace-nowrap px-2 py-2 ";
 
   if (status === "actual") {
-    className += "font-semibold bg-primary/5 ";
+    className += "font-bold bg-blue-100 dark:bg-blue-900/40 text-blue-900 dark:text-blue-100 ";
   } else if (hasOverride) {
-    className += "bg-amber-50 dark:bg-amber-950/20 ";
+    className += "font-semibold bg-amber-100 dark:bg-amber-900/40 ";
   } else if (hasVariance) {
-    className += "bg-orange-50 dark:bg-orange-950/20 ";
+    className += "font-semibold bg-orange-100 dark:bg-orange-900/40 ";
+  } else {
+    className += "text-muted-foreground ";
   }
 
-  if (isNegative || value < 0) {
+  if (status !== "actual" && (isNegative || value < 0)) {
     className += "text-red-600 dark:text-red-400 ";
   }
 
   return (
-    <td className={className}>
+    <td className={className} data-testid={`cell-${status}`}>
       {formatCurrency(value)}
     </td>
   );
@@ -170,18 +172,18 @@ export default function CashFlowGrid() {
           <p className="text-sm text-muted-foreground">Rolling 13-month view - actual current month + 12 future months</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1">
-            <Badge variant="outline" className="text-xs">
-              <div className="w-2 h-2 rounded-full bg-primary/40 mr-1" />
+          <div className="flex items-center gap-1.5">
+            <Badge variant="outline" className="text-xs bg-blue-100 dark:bg-blue-900/40 text-blue-900 dark:text-blue-100 border-blue-300 dark:border-blue-700 font-semibold">
               Actual
             </Badge>
-            <Badge variant="outline" className="text-xs">
-              <div className="w-2 h-2 rounded-full bg-amber-400 mr-1" />
+            <Badge variant="outline" className="text-xs bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-100 border-amber-300 dark:border-amber-700 font-semibold">
               Override
             </Badge>
-            <Badge variant="outline" className="text-xs">
-              <div className="w-2 h-2 rounded-full bg-orange-400 mr-1" />
+            <Badge variant="outline" className="text-xs bg-orange-100 dark:bg-orange-900/40 text-orange-900 dark:text-orange-100 border-orange-300 dark:border-orange-700 font-semibold">
               Variance
+            </Badge>
+            <Badge variant="outline" className="text-xs text-muted-foreground font-normal">
+              Forecast
             </Badge>
           </div>
           <Button variant="outline" size="sm" onClick={expandAll} data-testid="button-expand-all">Expand All</Button>
