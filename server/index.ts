@@ -72,7 +72,8 @@ app.use((req, res, next) => {
       req.path.startsWith("/auth/") ||
       req.path === "/xero/callback" ||
       req.path === "/data-export" ||
-      req.path === "/data-import"
+      req.path === "/data-import" ||
+      req.path === "/data-fix"
     ) {
       return next();
     }

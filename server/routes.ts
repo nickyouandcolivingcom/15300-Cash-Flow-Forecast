@@ -1196,6 +1196,25 @@ export async function registerRoutes(
     });
   });
 
+  app.post("/api/data-fix", async (_req, res) => {
+    try {
+      const snapshots = await storage.getSnapshots();
+      if (snapshots.length === 0) {
+        await storage.createSnapshot({
+          snapshotDate: "2026-02-28",
+          balance: "4705.65",
+          bankAccountId: null,
+          source: "opening",
+        });
+      }
+      const { generateForecasts } = await import("./forecast-engine");
+      await generateForecasts();
+      res.json({ success: true, message: "Snapshot added and forecasts regenerated" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/data-export", async (_req, res) => {
     try {
       const accounts = await storage.getBankAccounts();
@@ -1297,7 +1316,8 @@ export async function registerRoutes(
       for (const snap of (data.snapshots || [])) {
         await storage.createSnapshot({
           snapshotDate: snap.snapshotDate,
-          totalBalance: snap.totalBalance,
+          balance: snap.balance,
+          bankAccountId: snap.bankAccountId || null,
           source: snap.source || "import",
         });
       }
