@@ -968,7 +968,8 @@ export async function registerRoutes(
       endDate: currentMonth + "-31",
     });
     const today = new Date().toISOString().split("T")[0];
-    const actualsToYesterday = allTransactions.filter(t => String(t.transactionDate) < today);
+    const bankOnlyTx = allTransactions.filter(t => t.xeroSourceType !== "invoice");
+    const actualsToYesterday = bankOnlyTx.filter(t => String(t.transactionDate) < today);
     const actualsNetToYesterday = actualsToYesterday.reduce((sum, t) => sum + (parseFloat(t.amount as string) || 0), 0);
     const currentCashPosition = openingBalanceTotal + actualsNetToYesterday;
     const lastActualDate = actualsToYesterday.length > 0
@@ -1145,7 +1146,8 @@ export async function registerRoutes(
       endDate: currentMonth + "-31",
     });
     const today = new Date().toISOString().split("T")[0];
-    const actualsToYesterday = allMonthTx.filter(t => String(t.transactionDate) < today);
+    const bankOnlyTx = allMonthTx.filter(t => t.xeroSourceType !== "invoice");
+    const actualsToYesterday = bankOnlyTx.filter(t => String(t.transactionDate) < today);
     const actualsNetToYesterday = actualsToYesterday.reduce((sum, t) => sum + (parseFloat(t.amount as string) || 0), 0);
     const currentCashPosition = openingBalanceTotal + actualsNetToYesterday;
     const lastActualDate = actualsToYesterday.length > 0
