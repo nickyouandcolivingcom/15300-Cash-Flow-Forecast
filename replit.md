@@ -25,7 +25,8 @@ A rolling 13-month cash flow forecasting web app for YOU & CO. LIVING LIMITED, a
 - 41 individual tenancy revenue lines from Xero invoices (account 200)
 - 75 supplier outflow lines from bank transaction data (one line per supplier)
 - Dashboard with charts showing cash trend and monthly flows
-- Forecast rules engine (monthly, quarterly, annual, one-off recurrence)
+- Forecast rules engine (monthly, quarterly, quadrimestral, annual, one-off recurrence)
+- Monthly volume profiles for variable-volume lines (e.g. TDS deposits: 1/month, 2 in Jul-Sep)
 - Variance detection and classification (timing, permanent, one-off)
 - Xero OAuth 2.0 integration with PKCE flow
 - Full audit trail
@@ -57,7 +58,7 @@ A rolling 13-month cash flow forecasting web app for YOU & CO. LIVING LIMITED, a
 - `/transactions` - Transaction management
 - `/variances` - Variance review and treatment
 - `/lines` - Cash flow line configuration
-- `/rules` - Forecast rules management
+- `/rules` - Forecast rules management (edit unit costs, volume profiles, recurrence)
 - `/accounts` - Bank account management
 - `/audit` - Audit log viewer
 - `/xero` - Xero Integration settings and import controls
