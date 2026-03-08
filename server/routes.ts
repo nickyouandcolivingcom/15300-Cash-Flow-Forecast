@@ -927,6 +927,7 @@ export async function registerRoutes(
     const allVariances = await storage.getVarianceEvents();
     const bankAccountsList = await storage.getBankAccounts();
     const currentMonthTransactions = await storage.getTransactionsByMonth(currentMonth);
+    const allRules = await storage.getForecastRules();
 
     const totalBalance = bankAccountsList.reduce((sum, a) => sum + (parseFloat(a.currentBalance as string) || 0), 0);
 
@@ -997,9 +998,13 @@ export async function registerRoutes(
         };
       }
 
+      const lineRules = allRules.filter(r => r.cashflowLineId === line.id && r.active);
+      const recurrenceType = lineRules.length > 0 ? lineRules[0].recurrenceType : null;
+
       return {
         line,
         monthData,
+        recurrenceType,
       };
     });
 

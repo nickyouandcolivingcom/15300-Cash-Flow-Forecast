@@ -33,6 +33,7 @@ interface GridLine {
     varianceAmount: number | null;
     varianceTreatment: string | null;
   }>;
+  recurrenceType: string | null;
 }
 
 interface GridData {
@@ -318,7 +319,9 @@ function CategorySection({ category, lines, months, currentMonth, categoryTotals
           <td className="sticky left-0 z-10 bg-background pl-10 pr-4 py-1.5">
             <div className="flex items-center gap-1.5">
               <span className="text-xs">{row.line.name}</span>
-              {row.line.lineType === "one_off" && <Badge variant="outline" className="text-[10px]">One-off</Badge>}
+              {row.recurrenceType === "annual" && <Badge variant="outline" className="text-[10px]">Annual</Badge>}
+              {row.recurrenceType === "semi_annual" && <Badge variant="outline" className="text-[10px]">Semi-annual</Badge>}
+              {row.recurrenceType === "quarterly" && <Badge variant="outline" className="text-[10px]">Quarterly</Badge>}
             </div>
           </td>
           <td className="text-center text-xs text-muted-foreground px-1 py-1.5 tabular-nums">
