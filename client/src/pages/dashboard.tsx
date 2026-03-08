@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency, formatMonth } from "@/lib/format";
-import { TrendingUp, TrendingDown, Wallet, AlertTriangle, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertTriangle, ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
 
 interface DashboardData {
@@ -68,17 +68,6 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Current Cash Position</CardTitle>
-            <Wallet className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-cash-position">{formatCurrency(data.currentCashPosition)}</div>
-            <p className="text-xs text-muted-foreground mt-1">Across {data.bankAccounts.length} accounts</p>
-          </CardContent>
-        </Card>
-
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Free Cash Flow (13m)</CardTitle>
@@ -146,13 +135,13 @@ export default function Dashboard() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base font-medium">Bank Accounts</CardTitle>
+            <CardTitle className="text-base font-medium">Current Cash Position</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {data.bankAccounts.map((account) => (
               <div key={account.id} className="flex items-center justify-between gap-2" data-testid={`card-bank-account-${account.id}`}>
-                <p className="text-sm font-medium">{account.name}</p>
-                <p className="text-lg font-semibold tabular-nums text-right">{formatCurrency(account.currentBalance)}</p>
+                <p className="text-sm text-muted-foreground">{account.name}</p>
+                <p className="text-sm font-medium tabular-nums text-right">{formatCurrency(account.currentBalance)}</p>
               </div>
             ))}
             <div className="border-t pt-3 mt-3">
