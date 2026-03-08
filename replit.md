@@ -60,7 +60,9 @@ A rolling 13-month cash flow forecasting web app for YOU & CO. LIVING LIMITED, a
 
 ## Pages
 - `/` - Dashboard (KPIs, charts, bank accounts)
-- `/grid` - Cash flow grid (spreadsheet-style 13-month view)
+- `/grid` - Cash flow grid (spreadsheet-style 13-month view, click any forecast cell to edit)
+  - "Update rule" changes the base amount for all future months (permanent price change)
+  - "Override this month" changes only the selected month (one-off adjustment)
 - `/transactions` - Transaction management
 - `/variances` - Variance review and treatment
 - `/lines` - Cash flow line configuration

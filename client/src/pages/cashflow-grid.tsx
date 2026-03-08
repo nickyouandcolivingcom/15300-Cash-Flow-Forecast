@@ -1,10 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { formatCurrency, formatMonth } from "@/lib/format";
 import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import { useState } from "react";
@@ -34,6 +37,8 @@ interface GridLine {
     varianceTreatment: string | null;
   }>;
   recurrenceType: string | null;
+  ruleId: number | null;
+  ruleBaseAmount: number | null;
 }
 
 interface GridData {
@@ -51,12 +56,19 @@ interface GridData {
   bankAccounts: { id: number; name: string; currentBalance: string }[];
 }
 
-function CellValue({ value, status, hasOverride, hasVariance, isNegative }: {
+interface EditTarget {
+  line: GridLine;
+  month: string;
+  currentAmount: number;
+}
+
+function CellValue({ value, status, hasOverride, hasVariance, isNegative, onClick }: {
   value: number;
   status: string;
   hasOverride: boolean;
   hasVariance: boolean;
   isNegative?: boolean;
+  onClick?: () => void;
 }) {
   let className = "text-right text-xs tabular-nums whitespace-nowrap px-2 py-2 ";
 
@@ -74,14 +86,18 @@ function CellValue({ value, status, hasOverride, hasVariance, isNegative }: {
     className += "text-red-600 dark:text-red-400 ";
   }
 
+  if (onClick && status !== "actual") {
+    className += "cursor-pointer hover:ring-2 hover:ring-primary/50 hover:ring-inset ";
+  }
+
   return (
-    <td className={className} data-testid={`cell-${status}`}>
+    <td className={className} data-testid={`cell-${status}`} onClick={onClick && status !== "actual" ? onClick : undefined}>
       {formatCurrency(value)}
     </td>
   );
 }
 
-function TotalRow({ label, values, months, bold, highlight, showSign }: {
+function TotalRow({ label, values, months, bold, highlight }: {
   label: string;
   values: Record<string, number>;
   months: string[];
@@ -104,10 +120,143 @@ function TotalRow({ label, values, months, bold, highlight, showSign }: {
   );
 }
 
+function EditCellDialog({ target, onClose }: { target: EditTarget; onClose: () => void }) {
+  const { toast } = useToast();
+  const [newAmount, setNewAmount] = useState(Math.abs(target.currentAmount).toFixed(2));
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const isOutflow = target.line.line.direction === "outflow";
+  const hasRule = target.line.ruleId !== null;
+  const currentRuleAmount = target.line.ruleBaseAmount;
+
+  const handleUpdateRule = async () => {
+    if (!target.line.ruleId) return;
+    setSaving(true);
+    try {
+      const amount = isOutflow ? -Math.abs(parseFloat(newAmount)) : Math.abs(parseFloat(newAmount));
+      await apiRequest("PATCH", `/api/forecast-rules/${target.line.ruleId}`, {
+        baseAmount: amount.toFixed(2),
+      });
+      await apiRequest("POST", "/api/forecast/generate");
+      await queryClient.invalidateQueries({ queryKey: ["/api/cashflow-grid"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      toast({ title: "Rule updated", description: `${target.line.line.name} updated to ${formatCurrency(amount)} for all future months.` });
+      onClose();
+    } catch {
+      toast({ title: "Error", description: "Failed to update rule.", variant: "destructive" });
+    }
+    setSaving(false);
+  };
+
+  const handleOverrideMonth = async () => {
+    setSaving(true);
+    try {
+      const amount = isOutflow ? -Math.abs(parseFloat(newAmount)) : Math.abs(parseFloat(newAmount));
+      await apiRequest("POST", "/api/overrides", {
+        cashflowLineId: target.line.line.id,
+        forecastMonth: target.month,
+        overrideAmount: amount.toFixed(2),
+        reason: reason || `Manual override for ${formatMonth(target.month)}`,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["/api/cashflow-grid"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+      toast({ title: "Month overridden", description: `${target.line.line.name} overridden to ${formatCurrency(amount)} for ${formatMonth(target.month)} only.` });
+      onClose();
+    } catch {
+      toast({ title: "Error", description: "Failed to create override.", variant: "destructive" });
+    }
+    setSaving(false);
+  };
+
+  return (
+    <Dialog open onOpenChange={() => onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle data-testid="text-edit-dialog-title">{target.line.line.name}</DialogTitle>
+          <DialogDescription>
+            Edit forecast for {formatMonth(target.month)}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-2">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">Current forecast</span>
+            <span className="font-mono font-semibold" data-testid="text-current-forecast">{formatCurrency(target.currentAmount)}</span>
+          </div>
+
+          {hasRule && currentRuleAmount !== null && (
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Rule amount</span>
+              <span className="font-mono" data-testid="text-rule-amount">{formatCurrency(currentRuleAmount)}</span>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <Label htmlFor="new-amount">New amount ({isOutflow ? "enter as positive, stored as negative" : "positive value"})</Label>
+            <div className="flex items-center gap-2">
+              {isOutflow && <span className="text-muted-foreground text-sm">-</span>}
+              <span className="text-muted-foreground text-sm">£</span>
+              <Input
+                id="new-amount"
+                type="number"
+                step="0.01"
+                min="0"
+                value={newAmount}
+                onChange={(e) => setNewAmount(e.target.value)}
+                className="font-mono"
+                data-testid="input-new-amount"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="reason">Reason (optional)</Label>
+            <Textarea
+              id="reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. Price increase from April"
+              className="h-16"
+              data-testid="input-reason"
+            />
+          </div>
+        </div>
+
+        <DialogFooter className="flex-col gap-2 sm:flex-col">
+          {hasRule && (
+            <Button
+              onClick={handleUpdateRule}
+              disabled={saving || !newAmount}
+              className="w-full"
+              data-testid="button-update-rule"
+            >
+              Update rule — all future months
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            onClick={handleOverrideMonth}
+            disabled={saving || !newAmount}
+            className="w-full"
+            data-testid="button-override-month"
+          >
+            Override {formatMonth(target.month)} only
+          </Button>
+          <Button variant="ghost" onClick={onClose} className="w-full" data-testid="button-cancel-edit">
+            Cancel
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function CashFlowGrid() {
   const { data, isLoading } = useQuery<GridData>({ queryKey: ["/api/cashflow-grid"] });
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
   const [isGenerating, setIsGenerating] = useState(false);
+  const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
   const { toast } = useToast();
 
   const toggleCategory = (cat: string) => {
@@ -169,7 +318,7 @@ export default function CashFlowGrid() {
       <div className="flex items-center justify-between gap-1 flex-wrap">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">Cash Flow Grid</h1>
-          <p className="text-sm text-muted-foreground">Rolling 13-month view - actual current month + 12 future months</p>
+          <p className="text-sm text-muted-foreground">Rolling 13-month view — click any forecast cell to edit</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-1.5">
@@ -202,7 +351,7 @@ export default function CashFlowGrid() {
                     <th className="bg-muted/50 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-1 py-3 w-[40px]">
                       Due
                     </th>
-                    {data.months.map((month, idx) => (
+                    {data.months.map((month) => (
                       <th key={month} className={`text-right text-xs font-medium uppercase tracking-wider px-3 py-3 min-w-[100px] whitespace-nowrap ${
                         month === data.currentMonth ? "bg-primary/10 text-primary font-semibold" : "text-muted-foreground"
                       }`}>
@@ -237,6 +386,7 @@ export default function CashFlowGrid() {
                             categoryTotals={data.categoryTotals[cat] || {}}
                             isExpanded={isExpanded}
                             onToggle={() => toggleCategory(cat)}
+                            onCellClick={(line, month, amount) => setEditTarget({ line, month, currentAmount: amount })}
                           />
                         );
                       })}
@@ -264,6 +414,7 @@ export default function CashFlowGrid() {
                             categoryTotals={data.categoryTotals[cat] || {}}
                             isExpanded={isExpanded}
                             onToggle={() => toggleCategory(cat)}
+                            onCellClick={(line, month, amount) => setEditTarget({ line, month, currentAmount: amount })}
                           />
                         );
                       })}
@@ -280,11 +431,15 @@ export default function CashFlowGrid() {
           </ScrollArea>
         </CardContent>
       </Card>
+
+      {editTarget && (
+        <EditCellDialog target={editTarget} onClose={() => setEditTarget(null)} />
+      )}
     </div>
   );
 }
 
-function CategorySection({ category, lines, months, currentMonth, categoryTotals, isExpanded, onToggle }: {
+function CategorySection({ category, lines, months, currentMonth, categoryTotals, isExpanded, onToggle, onCellClick }: {
   category: string;
   lines: GridLine[];
   months: string[];
@@ -292,6 +447,7 @@ function CategorySection({ category, lines, months, currentMonth, categoryTotals
   categoryTotals: Record<string, number>;
   isExpanded: boolean;
   onToggle: () => void;
+  onCellClick: (line: GridLine, month: string, amount: number) => void;
 }) {
   return (
     <>
@@ -340,6 +496,7 @@ function CategorySection({ category, lines, months, currentMonth, categoryTotals
                 status={cell.status}
                 hasOverride={cell.hasOverride}
                 hasVariance={cell.hasVariance}
+                onClick={() => onCellClick(row, month, cell.amount)}
               />
             );
           })}

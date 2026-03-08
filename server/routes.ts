@@ -1063,10 +1063,14 @@ export async function registerRoutes(
       const lineRules = allRules.filter(r => r.cashflowLineId === line.id && r.active);
       const recurrenceType = lineRules.length > 0 ? lineRules[0].recurrenceType : null;
 
+      const activeRule = lineRules.length > 0 ? lineRules[0] : null;
+
       return {
         line,
         monthData,
         recurrenceType,
+        ruleId: activeRule?.id || null,
+        ruleBaseAmount: activeRule ? parseFloat(activeRule.baseAmount as string) || 0 : null,
       };
     });
 
