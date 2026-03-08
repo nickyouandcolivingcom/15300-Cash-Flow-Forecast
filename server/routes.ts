@@ -1187,6 +1187,18 @@ export async function registerRoutes(
     const totalOutflow = cashTrend.reduce((sum, t) => sum + t.outflow, 0);
     const freeCashFlow = totalInflow + totalOutflow;
 
+    const currentMonthTxs = await storage.getTransactionsByMonth(currentMonth);
+    const categoryBridge: Record<string, number> = {};
+    const bridgeCategories = ["Rent Revenue", "Recurring", "Tenancies", "Transfers", "Other"];
+    for (const cat of bridgeCategories) categoryBridge[cat] = 0;
+
+    for (const tx of currentMonthTxs) {
+      const line = tx.cashflowLineId ? lines.find(l => l.id === tx.cashflowLineId) : null;
+      const cat = line?.category || "Other";
+      const normalizedCat = bridgeCategories.includes(cat) ? cat : "Other";
+      categoryBridge[normalizedCat] += parseFloat(tx.amount as string) || 0;
+    }
+
     res.json({
       currentCashPosition,
       lastActualDate,
@@ -1198,6 +1210,7 @@ export async function registerRoutes(
       cashTrend,
       bankAccounts: bankAccountsList,
       months,
+      categoryBridge,
     });
   });
 

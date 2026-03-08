@@ -144,12 +144,34 @@ export default function Dashboard() {
               </p>
             )}
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs text-muted-foreground">Opening balance (1st)</p>
               <p className="text-xs tabular-nums text-right text-muted-foreground">{formatCurrency(data.openingBalanceTotal)}</p>
             </div>
-            <div className="border-t pt-3">
+            {data.categoryBridge && (
+              <div className="space-y-1 py-1">
+                {[
+                  { key: "Rent Revenue", label: "Rent Revenue" },
+                  { key: "Recurring", label: "Recurring" },
+                  { key: "Tenancies", label: "Tenancies" },
+                  { key: "Transfers", label: "Transfers" },
+                  { key: "Other", label: "Other" },
+                ].map(({ key, label }) => {
+                  const val = data.categoryBridge[key] || 0;
+                  if (val === 0) return null;
+                  return (
+                    <div key={key} className="flex items-center justify-between gap-2" data-testid={`bridge-${key.toLowerCase().replace(/\s+/g, "-")}`}>
+                      <p className="text-[11px] text-muted-foreground pl-2">{label}</p>
+                      <p className={`text-[11px] tabular-nums text-right ${val >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                        {val >= 0 ? "+" : ""}{formatCurrency(val)}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="border-t pt-2">
               <div className="flex items-center justify-between gap-1">
                 <p className="text-sm font-medium">Position</p>
                 <p className="text-lg font-bold tabular-nums text-right" data-testid="text-cash-position">{formatCurrency(data.currentCashPosition)}</p>
