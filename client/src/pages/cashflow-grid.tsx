@@ -152,8 +152,14 @@ export default function CashFlowGrid() {
   const inflowCategories = data.categories.filter(cat =>
     data.grid.some(g => g.line.category === cat && g.line.direction === "inflow")
   );
-  const outflowCategories = data.categories.filter(cat =>
+  const outflowCategoryOrder = ["Recurring", "Tenancies", "Transfers", "Other"];
+  const outflowCategories = outflowCategoryOrder.filter(cat =>
     data.grid.some(g => g.line.category === cat && g.line.direction === "outflow")
+  ).concat(
+    data.categories.filter(cat =>
+      data.grid.some(g => g.line.category === cat && g.line.direction === "outflow") &&
+      !outflowCategoryOrder.includes(cat)
+    )
   );
 
   return (
