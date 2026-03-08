@@ -28,6 +28,9 @@ function generateCodeChallenge(verifier: string): string {
 let lastCodeVerifier: string | null = null;
 
 function getRedirectUri(): string {
+  if (process.env.APP_URL) {
+    return `${process.env.APP_URL}/api/xero/callback`;
+  }
   const replitDomains = process.env.REPLIT_DOMAINS;
   if (replitDomains) {
     const domain = replitDomains.split(",")[0];

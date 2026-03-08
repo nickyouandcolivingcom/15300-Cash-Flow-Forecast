@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { eq, and, desc, gte, lte, asc, sql } from "drizzle-orm";
 import {
+  users, type InsertUser, type User,
   bankAccounts, type InsertBankAccount, type BankAccount,
   cashflowLines, type InsertCashflowLine, type CashflowLine,
   actualTransactions, type InsertActualTransaction, type ActualTransaction,
@@ -13,6 +14,11 @@ import {
 } from "@shared/schema";
 
 export interface IStorage {
+  getUser(id: number): Promise<User | undefined>;
+  getUserByUsername(username: string): Promise<User | undefined>;
+  createUser(data: InsertUser): Promise<User>;
+  getAllUsers(): Promise<User[]>;
+
   getBankAccounts(): Promise<BankAccount[]>;
   getBankAccount(id: number): Promise<BankAccount | undefined>;
   createBankAccount(data: InsertBankAccount): Promise<BankAccount>;
@@ -59,6 +65,25 @@ export interface IStorage {
 }
 
 export class DatabaseStorage implements IStorage {
+  async getUser(id: number): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user;
+  }
+
+  async createUser(data: InsertUser): Promise<User> {
+    const [user] = await db.insert(users).values(data).returning();
+    return user;
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    return db.select().from(users);
+  }
+
   async getBankAccounts(): Promise<BankAccount[]> {
     return db.select().from(bankAccounts).orderBy(asc(bankAccounts.name));
   }

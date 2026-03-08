@@ -71,8 +71,16 @@ A rolling 13-month cash flow forecasting web app for YOU & CO. LIVING LIMITED, a
 - `/audit` - Audit log viewer
 - `/xero` - Xero Integration settings and import controls
 
+## Authentication
+- Username/password login via Passport.js with session-based auth
+- Sessions stored in PostgreSQL (`user_sessions` table via connect-pg-simple)
+- First visit shows "Create Account" setup (one-time), then login thereafter
+- All `/api/*` routes protected except `/api/auth/*` and `/api/xero/callback`
+- Logout button in sidebar footer
+
 ## Environment
 - DATABASE_URL - PostgreSQL connection string
 - SESSION_SECRET - Session encryption key
 - XERO_CLIENT_ID - Xero OAuth app client ID
 - XERO_CLIENT_SECRET - Xero OAuth app client secret
+- APP_URL - Stable base URL for Xero redirect (e.g. https://your-app.replit.app), set after publishing
