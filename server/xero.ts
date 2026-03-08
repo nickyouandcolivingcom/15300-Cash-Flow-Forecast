@@ -43,10 +43,12 @@ const SCOPES = [
   "openid",
   "profile",
   "email",
-  "accounting.transactions",
-  "accounting.settings",
-  "accounting.contacts",
-  "accounting.reports.read",
+  "accounting.banktransactions.read",
+  "accounting.invoices.read",
+  "accounting.payments.read",
+  "accounting.settings.read",
+  "accounting.contacts.read",
+  "accounting.reports.banksummary.read",
   "offline_access",
 ];
 
