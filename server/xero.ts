@@ -226,14 +226,29 @@ export async function isXeroConnected(): Promise<{ connected: boolean; tenantNam
 }
 
 export async function fetchBankBalances(): Promise<{ totalBalance: number; accounts: { name: string; balance: number }[] }> {
-  const today = new Date().toISOString().split("T")[0];
-  const reportData = await xeroApiGet(
-    `Reports/BankSummary?fromDate=${today}&toDate=${today}`
-  );
-
   const existingAccounts = await storage.getBankAccounts();
+  const activeAccounts = existingAccounts.filter(a => a.active && a.xeroAccountId);
   const result: { name: string; balance: number }[] = [];
   let totalBalance = 0;
+
+  const today = new Date().toISOString().split("T")[0];
+  let reportData: any;
+  try {
+    reportData = await xeroApiGet(`Reports/BankSummary?fromDate=${today}&toDate=${today}`);
+    console.log("Bank Summary report response:", JSON.stringify(reportData).substring(0, 2000));
+  } catch (e: any) {
+    console.error("Bank Summary report failed, trying account-level approach:", e.message);
+    for (const account of activeAccounts) {
+      try {
+        const data = await xeroApiGet(`Accounts/${account.xeroAccountId}`);
+        const xeroAccount = data.Accounts?.[0];
+        console.log(`Account ${account.name} raw:`, JSON.stringify(xeroAccount).substring(0, 500));
+      } catch (e2: any) {
+        console.error(`Account fetch failed for ${account.name}: ${e2.message}`);
+      }
+    }
+    throw e;
+  }
 
   const report = reportData.Reports?.[0];
   if (report?.Rows) {
@@ -243,25 +258,35 @@ export async function fetchBankBalances(): Promise<{ totalBalance: number; accou
           if (row.RowType === "Row" && row.Cells) {
             const accountName = row.Cells[0]?.Value || "";
             const closingBalance = parseFloat(row.Cells[3]?.Value || "0");
+            console.log(`Bank Summary row: "${accountName}" closing=${closingBalance}`);
 
-            const match = existingAccounts.find(e =>
-              e.active && accountName.toUpperCase().includes(e.name.toUpperCase().replace(" ACCOUNT", "").replace("BUSINESS", "").trim())
-            ) || existingAccounts.find(e =>
-              e.active && e.name.toUpperCase().includes(accountName.split(" ")[0].toUpperCase())
-            );
-
-            if (match) {
+            const match = activeAccounts.find(a => a.xeroAccountId && accountName.toLowerCase().includes(a.name.split(" ")[0].toLowerCase()));
+            if (!match) {
+              const matchByXeroName = activeAccounts.find(a => {
+                const dbWords = a.name.toLowerCase().split(/\s+/);
+                const xeroWords = accountName.toLowerCase().split(/\s+/);
+                return dbWords.some(w => w.length > 3 && xeroWords.some(xw => xw.includes(w)));
+              });
+              if (matchByXeroName) {
+                result.push({ name: matchByXeroName.name, balance: closingBalance });
+                totalBalance += closingBalance;
+                await storage.updateBankAccount(matchByXeroName.id, { currentBalance: closingBalance.toFixed(2) });
+                console.log(`Matched "${accountName}" to ${matchByXeroName.name}: £${closingBalance.toFixed(2)}`);
+              } else {
+                console.log(`No match for Bank Summary row: "${accountName}"`);
+              }
+            } else {
               result.push({ name: match.name, balance: closingBalance });
               totalBalance += closingBalance;
-              await storage.updateBankAccount(match.id, {
-                currentBalance: closingBalance.toFixed(2),
-              });
-              console.log(`Updated ${match.name} balance from Xero Bank Summary: £${closingBalance.toFixed(2)}`);
+              await storage.updateBankAccount(match.id, { currentBalance: closingBalance.toFixed(2) });
+              console.log(`Matched "${accountName}" to ${match.name}: £${closingBalance.toFixed(2)}`);
             }
           }
         }
       }
     }
+  } else {
+    console.log("Bank Summary report returned no rows");
   }
 
   return { totalBalance, accounts: result };

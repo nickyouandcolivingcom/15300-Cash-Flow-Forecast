@@ -127,6 +127,15 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/xero/fetch-balances", async (_req, res) => {
+    try {
+      const balances = await fetchBankBalances();
+      res.json({ success: true, ...balances });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/xero/disconnect", async (_req, res) => {
     try {
       const { db } = await import("./db");
