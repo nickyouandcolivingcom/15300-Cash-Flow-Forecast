@@ -1196,5 +1196,120 @@ export async function registerRoutes(
     });
   });
 
+  app.get("/api/data-export", async (_req, res) => {
+    try {
+      const accounts = await storage.getBankAccounts();
+      const lines = await storage.getCashflowLines();
+      const rules = await storage.getForecastRules();
+      const transactions = await storage.getActualTransactions({});
+      const forecasts = await storage.getForecastMonths({});
+      const snapshots = await storage.getSnapshots();
+      const overridesList = await storage.getOverrides();
+      res.json({ accounts, lines, rules, transactions, forecasts, snapshots, overrides: overridesList });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/data-import", async (req, res) => {
+    try {
+      const data = req.body;
+      if (!data.accounts || !data.lines) {
+        return res.status(400).json({ message: "Invalid import data" });
+      }
+
+      const existingAccounts = await storage.getBankAccounts();
+      if (existingAccounts.length > 0) {
+        return res.status(400).json({ message: "Database already has data. Clear it first." });
+      }
+
+      const accountIdMap: Record<number, number> = {};
+      for (const acc of data.accounts) {
+        const created = await storage.createBankAccount({
+          name: acc.name,
+          xeroAccountId: acc.xeroAccountId,
+          currentBalance: acc.currentBalance || "0",
+          active: acc.active,
+        });
+        accountIdMap[acc.id] = created.id;
+      }
+
+      const lineIdMap: Record<number, number> = {};
+      for (const line of data.lines) {
+        const created = await storage.createCashflowLine({
+          code: line.code,
+          name: line.name,
+          category: line.category,
+          direction: line.direction,
+          lineType: line.lineType,
+          sortOrder: line.sortOrder,
+          bankAccountId: line.bankAccountId ? (accountIdMap[line.bankAccountId] || null) : null,
+          supplierName: line.supplierName || null,
+          active: line.active,
+          isRollup: line.isRollup || false,
+          parentLineId: null,
+          xeroContactId: line.xeroContactId || null,
+        });
+        lineIdMap[line.id] = created.id;
+      }
+
+      for (const line of data.lines) {
+        if (line.parentLineId && lineIdMap[line.parentLineId]) {
+          await storage.updateCashflowLine(lineIdMap[line.id], { parentLineId: lineIdMap[line.parentLineId] });
+        }
+      }
+
+      for (const rule of (data.rules || [])) {
+        if (!lineIdMap[rule.cashflowLineId]) continue;
+        await storage.createForecastRule({
+          cashflowLineId: lineIdMap[rule.cashflowLineId],
+          recurrenceType: rule.recurrenceType,
+          frequency: rule.frequency,
+          baseAmount: rule.baseAmount,
+          startDate: rule.startDate,
+          endDate: rule.endDate || null,
+          upliftType: rule.upliftType || "none",
+          upliftValue: rule.upliftValue || "0",
+          upliftFrequency: rule.upliftFrequency || "annual",
+          forecastConfidence: rule.forecastConfidence || "medium",
+          monthlyVolumes: rule.monthlyVolumes || null,
+          active: rule.active,
+        });
+      }
+
+      for (const tx of (data.transactions || [])) {
+        if (!lineIdMap[tx.cashflowLineId] && tx.cashflowLineId) continue;
+        await storage.createActualTransaction({
+          transactionDate: tx.transactionDate,
+          amount: tx.amount,
+          description: tx.description,
+          supplierOrCounterparty: tx.supplierOrCounterparty,
+          bankAccountId: tx.bankAccountId ? (accountIdMap[tx.bankAccountId] || null) : null,
+          cashflowLineId: tx.cashflowLineId ? (lineIdMap[tx.cashflowLineId] || null) : null,
+          xeroTransactionId: tx.xeroTransactionId || null,
+          xeroSourceType: tx.xeroSourceType || null,
+          mappedConfidence: tx.mappedConfidence || "low",
+          mappingMethod: tx.mappingMethod || "auto",
+          reconciledFlag: tx.reconciledFlag || false,
+        });
+      }
+
+      for (const snap of (data.snapshots || [])) {
+        await storage.createSnapshot({
+          snapshotDate: snap.snapshotDate,
+          totalBalance: snap.totalBalance,
+          source: snap.source || "import",
+        });
+      }
+
+      const { generateForecasts } = await import("./forecast-engine");
+      await generateForecasts();
+
+      res.json({ success: true, message: `Imported ${Object.keys(accountIdMap).length} accounts, ${Object.keys(lineIdMap).length} lines` });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   return httpServer;
 }

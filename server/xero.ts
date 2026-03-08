@@ -64,12 +64,9 @@ export function getAuthUrl(): { url: string; state: string } {
   cleanExpiredStates();
   const redirectUri = getRedirectUri();
   const state = crypto.randomBytes(16).toString("hex");
-  const codeVerifier = generateCodeVerifier();
-  const codeChallenge = generateCodeChallenge(codeVerifier);
-  oauthStates.set(state, { timestamp: Date.now(), codeVerifier });
-  lastCodeVerifier = codeVerifier;
+  oauthStates.set(state, { timestamp: Date.now(), codeVerifier: "" });
   const scopeStr = SCOPES.join(" ");
-  const url = `https://login.xero.com/identity/connect/authorize?response_type=code&client_id=${XERO_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopeStr)}&state=${state}&code_challenge=${codeChallenge}&code_challenge_method=S256`;
+  const url = `https://login.xero.com/identity/connect/authorize?response_type=code&client_id=${XERO_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopeStr)}&state=${state}`;
   return { url, state };
 }
 
@@ -95,9 +92,6 @@ export async function exchangeCodeForTokens(code: string, codeVerifier: string |
     code,
     redirect_uri: redirectUri,
   };
-  if (codeVerifier) {
-    bodyParams.code_verifier = codeVerifier;
-  }
 
   const tokenResponse = await fetch("https://identity.xero.com/connect/token", {
     method: "POST",
