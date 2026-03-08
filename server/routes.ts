@@ -1199,12 +1199,14 @@ export async function registerRoutes(
       categoryBridge[normalizedCat] += parseFloat(tx.amount as string) || 0;
     }
 
-    const bridgeTotal = Object.values(categoryBridge).reduce((sum, val) => sum + val, 0);
-    const computedPosition = openingBalanceTotal + bridgeTotal;
+    const movementsTotal = Object.values(categoryBridge).reduce((sum, val) => sum + val, 0);
+    const reconcilingDiff = currentCashPosition - openingBalanceTotal - movementsTotal;
+    if (Math.abs(reconcilingDiff) > 0.01) {
+      categoryBridge["Other"] += reconcilingDiff;
+    }
 
     res.json({
-      currentCashPosition: computedPosition,
-      liveBankBalance: currentCashPosition,
+      currentCashPosition,
       lastActualDate,
       openingBalanceTotal,
       freeCashFlow,
