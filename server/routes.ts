@@ -980,14 +980,26 @@ export async function registerRoutes(
         const va = lineVariances.find(v => v.forecastMonth === month);
 
         const isCurrentMonth = month === currentMonth;
+        const fcActual = fc?.actualAmount ? parseFloat(fc.actualAmount as string) : null;
         const actualAmt = isCurrentMonth && lineCurrentTx.length > 0
           ? currentMonthActual
-          : (fc?.actualAmount ? parseFloat(fc.actualAmount as string) : null);
+          : fcActual;
+
+        let displayAmount: number;
+        if (isCurrentMonth) {
+          if (lineCurrentTx.length > 0) {
+            displayAmount = currentMonthActual;
+          } else if (fcActual !== null) {
+            displayAmount = fcActual;
+          } else {
+            displayAmount = fc ? parseFloat(fc.currentForecastAmount as string) || 0 : 0;
+          }
+        } else {
+          displayAmount = fc ? parseFloat(fc.currentForecastAmount as string) || 0 : 0;
+        }
 
         monthData[month] = {
-          amount: isCurrentMonth && lineCurrentTx.length > 0
-            ? currentMonthActual
-            : (fc ? parseFloat(fc.currentForecastAmount as string) || 0 : 0),
+          amount: displayAmount,
           status: isCurrentMonth ? "actual" : (fc?.status || "forecast"),
           hasOverride: !!ov,
           hasVariance: !!va,
