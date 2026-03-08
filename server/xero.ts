@@ -252,8 +252,8 @@ export async function fetchBankBalances(): Promise<{ totalBalance: number; accou
         for (const row of section.Rows) {
           if (row.RowType === "Row" && row.Cells) {
             const accountName = row.Cells[0]?.Value || "";
-            const closingBalance = parseFloat(row.Cells[3]?.Value || "0");
-            console.log(`Bank Summary row: "${accountName}" closing=${closingBalance}`);
+            const closingBalance = parseFloat(row.Cells[4]?.Value || row.Cells[3]?.Value || "0");
+            console.log(`Bank Summary row: "${accountName}" closing=${closingBalance} (cells: ${row.Cells.map((c: any) => c.Value).join(", ")})`);
 
             const match = activeAccounts.find(a => a.xeroAccountId && accountName.toLowerCase().includes(a.name.split(" ")[0].toLowerCase()));
             if (!match) {
