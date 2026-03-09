@@ -1199,6 +1199,16 @@ export async function registerRoutes(
       categoryBridge[normalizedCat] += parseFloat(tx.amount as string) || 0;
     }
 
+    const prepaidLine = lines.find(l => l.code === "RENT-PRE");
+    if (prepaidLine) {
+      const prepaidForecasts = await storage.getForecastMonths({ startMonth: currentMonth, endMonth: currentMonth });
+      const prepaidFc = prepaidForecasts.find(f => f.cashflowLineId === prepaidLine.id);
+      const prepaidActual = prepaidFc?.actualAmount ? parseFloat(prepaidFc.actualAmount as string) : 0;
+      if (Math.abs(prepaidActual) > 0.01) {
+        categoryBridge["Rent Revenue"] += prepaidActual;
+      }
+    }
+
     const movementsTotal = Object.values(categoryBridge).reduce((sum, val) => sum + val, 0);
     const reconcilingDiff = currentCashPosition - openingBalanceTotal - movementsTotal;
     if (Math.abs(reconcilingDiff) > 0.01) {
