@@ -122,7 +122,7 @@ function TotalRow({ label, values, months, bold, highlight }: {
 
 function EditCellDialog({ target, onClose }: { target: EditTarget; onClose: () => void }) {
   const { toast } = useToast();
-  const [newAmount, setNewAmount] = useState(Math.abs(target.currentAmount).toFixed(2));
+  const [newAmount, setNewAmount] = useState(target.currentAmount.toFixed(2));
   const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -134,7 +134,7 @@ function EditCellDialog({ target, onClose }: { target: EditTarget; onClose: () =
     if (!target.line.ruleId) return;
     setSaving(true);
     try {
-      const amount = isOutflow ? -Math.abs(parseFloat(newAmount)) : Math.abs(parseFloat(newAmount));
+      const amount = parseFloat(newAmount);
       await apiRequest("PATCH", `/api/forecast-rules/${target.line.ruleId}`, {
         baseAmount: amount.toFixed(2),
       });
@@ -152,7 +152,7 @@ function EditCellDialog({ target, onClose }: { target: EditTarget; onClose: () =
   const handleOverrideMonth = async () => {
     setSaving(true);
     try {
-      const amount = isOutflow ? -Math.abs(parseFloat(newAmount)) : Math.abs(parseFloat(newAmount));
+      const amount = parseFloat(newAmount);
       await apiRequest("POST", "/api/overrides", {
         cashflowLineId: target.line.line.id,
         forecastMonth: target.month,
@@ -193,15 +193,13 @@ function EditCellDialog({ target, onClose }: { target: EditTarget; onClose: () =
           )}
 
           <div className="space-y-2">
-            <Label htmlFor="new-amount">New amount ({isOutflow ? "enter as positive, stored as negative" : "positive value"})</Label>
+            <Label htmlFor="new-amount">New amount (negative = outflow, positive = inflow)</Label>
             <div className="flex items-center gap-2">
-              {isOutflow && <span className="text-muted-foreground text-sm">-</span>}
               <span className="text-muted-foreground text-sm">£</span>
               <Input
                 id="new-amount"
                 type="number"
                 step="0.01"
-                min="0"
                 value={newAmount}
                 onChange={(e) => setNewAmount(e.target.value)}
                 className="font-mono"
