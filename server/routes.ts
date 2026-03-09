@@ -1209,13 +1209,15 @@ export async function registerRoutes(
     let remainingCommitments = 0;
     for (const line of activeNonRollup) {
       if (line.code === "RENT-PRE") continue;
-      const dueDay = line.dueDay ?? 1;
-      if (dueDay <= currentDay) continue;
+      if (line.direction === "inflow") continue;
       const fc = forecasts.find(f => f.cashflowLineId === line.id && f.forecastMonth === currentMonth);
       if (!fc) continue;
       const fcActual = fc.actualAmount ? parseFloat(fc.actualAmount as string) : null;
       if (fcActual !== null) continue;
+      const dueDay = line.dueDay;
+      if (dueDay !== null && dueDay <= currentDay) continue;
       const amt = parseFloat(fc.currentForecastAmount as string) || 0;
+      if (amt === 0) continue;
       remainingCommitments += amt;
     }
 
@@ -1282,21 +1284,28 @@ export async function registerRoutes(
     });
   });
 
-  app.post("/api/fix-prepaid", async (_req, res) => {
+  app.post("/api/fix-production", async (_req, res) => {
     try {
-      const currentMonth = getCurrentMonth();
-      const lines = await storage.getCashflowLines();
-      const prepaidLine = lines.find(l => l.code === "RENT-PRE");
-      if (!prepaidLine) return res.status(404).json({ message: "RENT-PRE not found" });
+      const results: string[] = [];
 
-      const forecasts = await storage.getForecastMonths({ cashflowLineId: prepaidLine.id, startMonth: currentMonth, endMonth: currentMonth });
-      const fc = forecasts[0];
-      if (!fc) return res.status(404).json({ message: "No forecast record for RENT-PRE this month" });
+      const salaryLine = await db.execute(sql`SELECT id, active FROM cashflow_lines WHERE code = 'OUT-002'`);
+      if (salaryLine.rows?.[0] && !salaryLine.rows[0].active) {
+        await db.execute(sql`UPDATE cashflow_lines SET active = true WHERE code = 'OUT-002'`);
+        results.push("Activated NICK DAVIDSON (OUT-002)");
+      } else {
+        results.push(`OUT-002 already active=${salaryLine.rows?.[0]?.active}`);
+      }
 
-      await db.execute(sql`UPDATE forecast_months SET actual_amount = '-6529.67', current_forecast_amount = '-6529.67' WHERE id = ${fc.id}`);
+      const dlaLine = await db.execute(sql`SELECT id, active FROM cashflow_lines WHERE code = 'TR-DLA'`);
+      if (dlaLine.rows?.[0] && !dlaLine.rows[0].active) {
+        await db.execute(sql`UPDATE cashflow_lines SET active = true WHERE code = 'TR-DLA'`);
+        results.push("Activated DLA (TR-DLA)");
+      } else {
+        results.push(`TR-DLA already active=${dlaLine.rows?.[0]?.active}`);
+      }
 
-      const verify = await db.execute(sql`SELECT id, actual_amount, current_forecast_amount FROM forecast_months WHERE id = ${fc.id}`);
-      res.json({ success: true, fcId: fc.id, lineId: prepaidLine.id, updated: verify.rows?.[0] });
+      const verify = await db.execute(sql`SELECT code, name, active FROM cashflow_lines WHERE code IN ('OUT-002', 'TR-DLA')`);
+      res.json({ success: true, actions: results, lines: verify.rows });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
