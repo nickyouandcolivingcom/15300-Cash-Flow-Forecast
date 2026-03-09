@@ -1286,9 +1286,9 @@ export async function registerRoutes(
 
   app.post("/api/fix-production", async (_req, res) => {
     try {
-      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v3-applied' LIMIT 1`);
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v4-applied' LIMIT 1`);
       if (marker.rows?.length) {
-        return res.json({ success: false, message: "Fix v3 already applied" });
+        return res.json({ success: false, message: "Fix v4 already applied" });
       }
 
       const results: string[] = [];
@@ -1316,7 +1316,20 @@ export async function registerRoutes(
       await generateForecasts();
       results.push("Regenerated all forecasts (overrides preserved)");
 
-      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v3-applied')`);
+      const renames = [
+        { from: '32LFR#6', to: '32LFR#7', fromName: '32LFR#6 J LOWE', toName: '32LFR#7 J LOWE' },
+        { from: '32LFR#5', to: '32LFR#6', fromName: '32LFR#5 B FOSTER', toName: '32LFR#6 B FOSTER' },
+        { from: '32LFR#4', to: '32LFR#5', fromName: '32LFR#4 S HATHAWAY', toName: '32LFR#5 S HATHAWAY' },
+        { from: '32LFR#3', to: '32LFR#4', fromName: '32LFR#3 J BARTON', toName: '32LFR#4 J BARTON' },
+        { from: '32LFR#2', to: '32LFR#3', fromName: '32LFR#2 E RIGBY', toName: '32LFR#3 E RIGBY' },
+        { from: '32LFR#1', to: '32LFR#2', fromName: '32LFR#1 T TOGY', toName: '32LFR#2 T TOGY' },
+      ];
+      for (const r of renames) {
+        await db.execute(sql`UPDATE cashflow_lines SET code = ${r.to}, name = ${r.toName} WHERE code = ${r.from}`);
+      }
+      results.push("Renamed 32LFR rooms: #1→#2, #2→#3, #3→#4, #4→#5, #5→#6, #6→#7");
+
+      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v4-applied')`);
 
       const verify = await db.execute(sql`
         SELECT cl.code, cl.name, cl.active, fm.forecast_month, fm.current_forecast_amount 
