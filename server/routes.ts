@@ -1288,24 +1288,69 @@ export async function registerRoutes(
     try {
       const results: string[] = [];
 
-      const salaryLine = await db.execute(sql`SELECT id, active FROM cashflow_lines WHERE code = 'OUT-002'`);
-      if (salaryLine.rows?.[0] && !salaryLine.rows[0].active) {
-        await db.execute(sql`UPDATE cashflow_lines SET active = true WHERE code = 'OUT-002'`);
-        results.push("Activated NICK DAVIDSON (OUT-002)");
-      } else {
-        results.push(`OUT-002 already active=${salaryLine.rows?.[0]?.active}`);
+      await db.execute(sql`UPDATE cashflow_lines SET active = true WHERE code IN ('OUT-002', 'TR-DLA')`);
+      results.push("Ensured OUT-002 and TR-DLA are active");
+
+      const salaryRow = await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = 'OUT-002'`);
+      const dlaRow = await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = 'TR-DLA'`);
+      const salaryId = salaryRow.rows?.[0]?.id;
+      const dlaId = dlaRow.rows?.[0]?.id;
+
+      const salaryRule = await db.execute(sql`SELECT base_amount, recurrence_type FROM forecast_rules WHERE cashflow_line_id = ${salaryId}`);
+      const dlaRule = await db.execute(sql`SELECT base_amount, recurrence_type FROM forecast_rules WHERE cashflow_line_id = ${dlaId}`);
+      results.push(`Salary rule: ${JSON.stringify(salaryRule.rows?.[0])}`);
+      results.push(`DLA rule: ${JSON.stringify(dlaRule.rows?.[0])}`);
+
+      const months = [];
+      const now = new Date();
+      const startYear = now.getFullYear();
+      const startMonth = now.getMonth() + 1;
+      for (let i = 0; i < 13; i++) {
+        const m = ((startMonth - 1 + i) % 12) + 1;
+        const y = startYear + Math.floor((startMonth - 1 + i) / 12);
+        months.push(`${y}-${String(m).padStart(2, "0")}`);
       }
 
-      const dlaLine = await db.execute(sql`SELECT id, active FROM cashflow_lines WHERE code = 'TR-DLA'`);
-      if (dlaLine.rows?.[0] && !dlaLine.rows[0].active) {
-        await db.execute(sql`UPDATE cashflow_lines SET active = true WHERE code = 'TR-DLA'`);
-        results.push("Activated DLA (TR-DLA)");
-      } else {
-        results.push(`TR-DLA already active=${dlaLine.rows?.[0]?.active}`);
+      if (salaryId && salaryRule.rows?.[0]) {
+        const baseAmt = parseFloat(salaryRule.rows[0].base_amount as string);
+        const recurrence = salaryRule.rows[0].recurrence_type;
+        for (const month of months) {
+          const monthNum = parseInt(month.split("-")[1]);
+          let amt = "0.00";
+          if (recurrence === "annual" && monthNum === 4) amt = baseAmt.toFixed(2);
+          else if (recurrence === "monthly") amt = baseAmt.toFixed(2);
+          
+          const existing = await db.execute(sql`SELECT id FROM forecast_months WHERE cashflow_line_id = ${salaryId} AND forecast_month = ${month}`);
+          if (existing.rows?.length) {
+            await db.execute(sql`UPDATE forecast_months SET current_forecast_amount = ${amt} WHERE cashflow_line_id = ${salaryId} AND forecast_month = ${month} AND actual_amount IS NULL`);
+          } else {
+            await db.execute(sql`INSERT INTO forecast_months (cashflow_line_id, forecast_month, current_forecast_amount) VALUES (${salaryId}, ${month}, ${amt})`);
+          }
+        }
+        results.push(`Salary forecasts set for ${months.length} months (annual in April = ${baseAmt})`);
       }
 
-      const verify = await db.execute(sql`SELECT code, name, active FROM cashflow_lines WHERE code IN ('OUT-002', 'TR-DLA')`);
-      res.json({ success: true, actions: results, lines: verify.rows });
+      if (dlaId && dlaRule.rows?.[0]) {
+        const baseAmt = parseFloat(dlaRule.rows[0].base_amount as string);
+        for (const month of months) {
+          const existing = await db.execute(sql`SELECT id FROM forecast_months WHERE cashflow_line_id = ${dlaId} AND forecast_month = ${month}`);
+          if (existing.rows?.length) {
+            await db.execute(sql`UPDATE forecast_months SET current_forecast_amount = ${baseAmt.toFixed(2)} WHERE cashflow_line_id = ${dlaId} AND forecast_month = ${month} AND actual_amount IS NULL`);
+          } else {
+            await db.execute(sql`INSERT INTO forecast_months (cashflow_line_id, forecast_month, current_forecast_amount) VALUES (${dlaId}, ${month}, ${baseAmt.toFixed(2)})`);
+          }
+        }
+        results.push(`DLA forecasts set for ${months.length} months (monthly = ${baseAmt})`);
+      }
+
+      const verify = await db.execute(sql`
+        SELECT cl.code, cl.name, cl.active, fm.forecast_month, fm.current_forecast_amount 
+        FROM cashflow_lines cl 
+        JOIN forecast_months fm ON fm.cashflow_line_id = cl.id 
+        WHERE cl.code IN ('OUT-002', 'TR-DLA') AND fm.forecast_month >= '2026-04'
+        ORDER BY cl.code, fm.forecast_month LIMIT 10
+      `);
+      res.json({ success: true, actions: results, verification: verify.rows });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
