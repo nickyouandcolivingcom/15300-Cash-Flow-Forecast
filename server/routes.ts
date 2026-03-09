@@ -1206,7 +1206,6 @@ export async function registerRoutes(
       const prepaidFromForecast = prepaidFc?.actualAmount ? parseFloat(prepaidFc.actualAmount as string) : null;
       const prepaidFromCurrent = prepaidFc?.currentForecastAmount ? parseFloat(prepaidFc.currentForecastAmount as string) : null;
       const prepaidActual = prepaidFromForecast ?? prepaidFromCurrent ?? 0;
-      console.log("RENT-PRE bridge:", { lineId: prepaidLine.id, fcId: prepaidFc?.id, actualAmt: prepaidFc?.actualAmount, currentAmt: prepaidFc?.currentForecastAmount, used: prepaidActual });
       if (Math.abs(prepaidActual) > 0.01) {
         categoryBridge["Rent Revenue"] += prepaidActual;
       }
