@@ -1200,14 +1200,16 @@ export async function registerRoutes(
       categoryBridge[normalizedCat] += parseFloat(tx.amount as string) || 0;
     }
 
-    const prepaidLine = lines.find(l => l.code === "RENT-PRE");
-    if (prepaidLine) {
-      const rawResult = await db.execute(sql`SELECT actual_amount FROM forecast_months WHERE cashflow_line_id = ${prepaidLine.id} AND forecast_month = ${currentMonth}`);
-      const prepaidActual = rawResult.rows?.[0]?.actual_amount ? parseFloat(rawResult.rows[0].actual_amount as string) : 0;
-      console.log("RENT-PRE bridge debug:", { prepaidLineId: prepaidLine.id, rawActual: rawResult.rows?.[0]?.actual_amount, prepaidActual });
-      if (Math.abs(prepaidActual) > 0.01) {
-        categoryBridge["Rent Revenue"] += prepaidActual;
-      }
+    const prepaidResult = await db.execute(sql`
+      SELECT fm.actual_amount 
+      FROM forecast_months fm 
+      JOIN cashflow_lines cl ON cl.id = fm.cashflow_line_id 
+      WHERE cl.code = 'RENT-PRE' AND fm.forecast_month = ${currentMonth}
+    `);
+    const prepaidActual = prepaidResult.rows?.[0]?.actual_amount ? parseFloat(prepaidResult.rows[0].actual_amount as string) : 0;
+    console.log("RENT-PRE bridge:", { rawActual: prepaidResult.rows?.[0]?.actual_amount, prepaidActual, rowCount: prepaidResult.rows?.length });
+    if (Math.abs(prepaidActual) > 0.01) {
+      categoryBridge["Rent Revenue"] += prepaidActual;
     }
 
     const movementsTotal = Object.values(categoryBridge).reduce((sum, val) => sum + val, 0);
