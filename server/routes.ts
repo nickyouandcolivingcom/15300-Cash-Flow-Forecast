@@ -1201,13 +1201,16 @@ export async function registerRoutes(
     }
 
     const prepaidResult = await db.execute(sql`
-      SELECT fm.actual_amount 
+      SELECT fm.id, fm.actual_amount, fm.current_forecast_amount, fm.status, fm.cashflow_line_id
       FROM forecast_months fm 
       JOIN cashflow_lines cl ON cl.id = fm.cashflow_line_id 
       WHERE cl.code = 'RENT-PRE' AND fm.forecast_month = ${currentMonth}
     `);
-    const prepaidActual = prepaidResult.rows?.[0]?.actual_amount ? parseFloat(prepaidResult.rows[0].actual_amount as string) : 0;
-    console.log("RENT-PRE bridge:", { rawActual: prepaidResult.rows?.[0]?.actual_amount, prepaidActual, rowCount: prepaidResult.rows?.length });
+    const row = prepaidResult.rows?.[0];
+    console.log("RENT-PRE bridge full row:", JSON.stringify(row));
+    console.log("RENT-PRE bridge row keys:", row ? Object.keys(row) : "no row");
+    const prepaidActual = row?.actual_amount ? parseFloat(row.actual_amount as string) : 0;
+    console.log("RENT-PRE prepaidActual:", prepaidActual);
     if (Math.abs(prepaidActual) > 0.01) {
       categoryBridge["Rent Revenue"] += prepaidActual;
     }
