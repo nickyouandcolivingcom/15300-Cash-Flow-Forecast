@@ -1288,7 +1288,20 @@ export async function registerRoutes(
     try {
       const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v2-applied' LIMIT 1`);
       if (marker.rows?.length) {
-        return res.json({ success: false, message: "Fix already applied" });
+        const diag = await db.execute(sql`
+          SELECT fr.id, fr.cashflow_line_id, fr.base_amount, fr.recurrence_type, fr.start_date, fr.end_date, fr.active, cl.code, cl.name
+          FROM forecast_rules fr
+          JOIN cashflow_lines cl ON cl.id = fr.cashflow_line_id
+          WHERE cl.code IN ('OUT-002', 'TR-DLA')
+        `);
+        const fcData = await db.execute(sql`
+          SELECT cl.code, fm.forecast_month, fm.current_forecast_amount, fm.actual_amount, fm.status
+          FROM forecast_months fm
+          JOIN cashflow_lines cl ON cl.id = fm.cashflow_line_id
+          WHERE cl.code IN ('OUT-002', 'TR-DLA')
+          ORDER BY cl.code, fm.forecast_month
+        `);
+        return res.json({ success: false, message: "Fix already applied", rules: diag.rows, forecasts: fcData.rows });
       }
 
       const results: string[] = [];
