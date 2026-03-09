@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency, formatMonth } from "@/lib/format";
 import { TrendingUp, TrendingDown, AlertTriangle, ArrowUpRight, ArrowDownRight } from "lucide-react";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from "recharts";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 interface DashboardData {
   currentCashPosition: number;
@@ -181,28 +181,6 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base font-medium">Monthly Cash Flows</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-72" data-testid="chart-monthly-flows">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                <XAxis dataKey="month" tick={{ fontSize: 11 }} className="text-muted-foreground" />
-                <YAxis tickFormatter={(v) => `${Math.round(v / 1000)}k`} tick={{ fontSize: 11 }} className="text-muted-foreground" />
-                <Tooltip
-                  formatter={(value: number, name: string) => [formatCurrency(value), name === "inflow" ? "Inflows" : name === "outflow" ? "Outflows" : "Net"]}
-                  contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: "6px", fontSize: "12px" }}
-                />
-                <Bar dataKey="inflow" fill="hsl(var(--chart-2))" radius={[2, 2, 0, 0]} name="inflow" />
-                <Bar dataKey="outflow" fill="hsl(var(--chart-5))" radius={[2, 2, 0, 0]} name="outflow" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }
