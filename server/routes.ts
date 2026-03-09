@@ -1200,19 +1200,16 @@ export async function registerRoutes(
       categoryBridge[normalizedCat] += parseFloat(tx.amount as string) || 0;
     }
 
-    const prepaidResult = await db.execute(sql`
-      SELECT fm.id, fm.actual_amount, fm.current_forecast_amount, fm.status, fm.cashflow_line_id
-      FROM forecast_months fm 
-      JOIN cashflow_lines cl ON cl.id = fm.cashflow_line_id 
-      WHERE cl.code = 'RENT-PRE' AND fm.forecast_month = ${currentMonth}
-    `);
-    const row = prepaidResult.rows?.[0];
-    console.log("RENT-PRE bridge full row:", JSON.stringify(row));
-    console.log("RENT-PRE bridge row keys:", row ? Object.keys(row) : "no row");
-    const prepaidActual = row?.actual_amount ? parseFloat(row.actual_amount as string) : 0;
-    console.log("RENT-PRE prepaidActual:", prepaidActual);
-    if (Math.abs(prepaidActual) > 0.01) {
-      categoryBridge["Rent Revenue"] += prepaidActual;
+    const prepaidLine = lines.find(l => l.code === "RENT-PRE");
+    if (prepaidLine) {
+      const prepaidFc = forecasts.find(f => f.cashflowLineId === prepaidLine.id && f.forecastMonth === currentMonth);
+      const prepaidFromForecast = prepaidFc?.actualAmount ? parseFloat(prepaidFc.actualAmount as string) : null;
+      const prepaidFromCurrent = prepaidFc?.currentForecastAmount ? parseFloat(prepaidFc.currentForecastAmount as string) : null;
+      const prepaidActual = prepaidFromForecast ?? prepaidFromCurrent ?? 0;
+      console.log("RENT-PRE bridge:", { lineId: prepaidLine.id, fcId: prepaidFc?.id, actualAmt: prepaidFc?.actualAmount, currentAmt: prepaidFc?.currentForecastAmount, used: prepaidActual });
+      if (Math.abs(prepaidActual) > 0.01) {
+        categoryBridge["Rent Revenue"] += prepaidActual;
+      }
     }
 
     const movementsTotal = Object.values(categoryBridge).reduce((sum, val) => sum + val, 0);
@@ -1234,6 +1231,26 @@ export async function registerRoutes(
       months,
       categoryBridge,
     });
+  });
+
+  app.post("/api/fix-prepaid", async (_req, res) => {
+    try {
+      const currentMonth = getCurrentMonth();
+      const lines = await storage.getCashflowLines();
+      const prepaidLine = lines.find(l => l.code === "RENT-PRE");
+      if (!prepaidLine) return res.status(404).json({ message: "RENT-PRE not found" });
+
+      const forecasts = await storage.getForecastMonths({ cashflowLineId: prepaidLine.id, startMonth: currentMonth, endMonth: currentMonth });
+      const fc = forecasts[0];
+      if (!fc) return res.status(404).json({ message: "No forecast record for RENT-PRE this month" });
+
+      await db.execute(sql`UPDATE forecast_months SET actual_amount = '-6529.67', current_forecast_amount = '-6529.67' WHERE id = ${fc.id}`);
+
+      const verify = await db.execute(sql`SELECT id, actual_amount, current_forecast_amount FROM forecast_months WHERE id = ${fc.id}`);
+      res.json({ success: true, fcId: fc.id, lineId: prepaidLine.id, updated: verify.rows?.[0] });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
   });
 
   app.get("/api/data-export", async (_req, res) => {
