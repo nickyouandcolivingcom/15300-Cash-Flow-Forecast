@@ -981,8 +981,9 @@ export async function registerRoutes(
     const openingBalanceTotal = snapshot ? parseFloat(snapshot.balance as string) : 0;
 
     const activeBankAccounts = bankAccountsList.filter(ba => ba.active);
-    const actualsTotalFromTx = currentMonthTransactions.reduce((sum, tx) => sum + (parseFloat(tx.amount as string) || 0), 0);
-    const currentCashPosition = openingBalanceTotal + actualsTotalFromTx;
+    const currentCashPosition = activeBankAccounts.reduce(
+      (sum, ba) => sum + (parseFloat(ba.currentBalance as string) || 0), 0
+    );
     const lastActualDate = new Date().toISOString().split("T")[0];
 
     const propDevOrder = ["16RC", "10KG", "32LFR", "84DD", "4WS", "26BLA", "26BLB", "26BLC", "27BLA", "27BLB", "27BLC", "27BLD", "26BL", "27BL"];
@@ -1157,9 +1158,10 @@ export async function registerRoutes(
     const snapshot = await storage.getLatestSnapshot(currentMonth + "-01");
     const openingBalanceTotal = snapshot ? parseFloat(snapshot.balance as string) : 0;
 
-    const currentMonthTx = await storage.getTransactionsByMonth(currentMonth);
-    const actualsTotalFromTx = currentMonthTx.reduce((sum, tx) => sum + (parseFloat(tx.amount as string) || 0), 0);
-    const currentCashPosition = openingBalanceTotal + actualsTotalFromTx;
+    const activeBankAccounts = bankAccountsList.filter(ba => ba.active);
+    const currentCashPosition = activeBankAccounts.reduce(
+      (sum, ba) => sum + (parseFloat(ba.currentBalance as string) || 0), 0
+    );
     const lastActualDate = new Date().toISOString().split("T")[0];
 
     let runningCash = openingBalanceTotal;
