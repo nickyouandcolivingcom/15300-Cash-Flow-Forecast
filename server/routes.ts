@@ -1333,14 +1333,15 @@ export async function registerRoutes(
       if (dlaId && dlaRule.rows?.[0]) {
         const baseAmt = parseFloat(dlaRule.rows[0].base_amount as string);
         for (const month of months) {
+          const amt = month === "2026-04" ? "7000.00" : baseAmt.toFixed(2);
           const existing = await db.execute(sql`SELECT id FROM forecast_months WHERE cashflow_line_id = ${dlaId} AND forecast_month = ${month}`);
           if (existing.rows?.length) {
-            await db.execute(sql`UPDATE forecast_months SET current_forecast_amount = ${baseAmt.toFixed(2)} WHERE cashflow_line_id = ${dlaId} AND forecast_month = ${month} AND actual_amount IS NULL`);
+            await db.execute(sql`UPDATE forecast_months SET current_forecast_amount = ${amt} WHERE cashflow_line_id = ${dlaId} AND forecast_month = ${month} AND actual_amount IS NULL`);
           } else {
-            await db.execute(sql`INSERT INTO forecast_months (cashflow_line_id, forecast_month, current_forecast_amount) VALUES (${dlaId}, ${month}, ${baseAmt.toFixed(2)})`);
+            await db.execute(sql`INSERT INTO forecast_months (cashflow_line_id, forecast_month, current_forecast_amount) VALUES (${dlaId}, ${month}, ${amt})`);
           }
         }
-        results.push(`DLA forecasts set for ${months.length} months (monthly = ${baseAmt})`);
+        results.push(`DLA forecasts set for ${months.length} months (monthly = ${baseAmt}, April 2026 = +7000)`);
       }
 
       const verify = await db.execute(sql`
