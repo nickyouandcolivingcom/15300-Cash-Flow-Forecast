@@ -11,6 +11,7 @@ interface DashboardData {
   lastActualDate: string | null;
   openingBalanceTotal: number;
   freeCashFlow: number;
+  monthEndCash: number;
   totalInflow: number;
   totalOutflow: number;
   pendingVariances: number;
@@ -72,14 +73,14 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Free Cash Flow (13m)</CardTitle>
-            {data.freeCashFlow >= 0 ? <TrendingUp className="h-4 w-4 text-emerald-600" /> : <TrendingDown className="h-4 w-4 text-red-600" />}
+            <CardTitle className="text-sm font-medium text-muted-foreground">Month End Cash</CardTitle>
+            {data.monthEndCash >= 0 ? <TrendingUp className="h-4 w-4 text-emerald-600" /> : <TrendingDown className="h-4 w-4 text-red-600" />}
           </CardHeader>
           <CardContent>
-            <div className={`text-2xl font-bold ${data.freeCashFlow >= 0 ? "text-emerald-600" : "text-red-600"}`} data-testid="text-free-cash-flow">
-              {formatCurrency(data.freeCashFlow)}
+            <div className={`text-2xl font-bold ${data.monthEndCash >= 0 ? "text-emerald-600" : "text-red-600"}`} data-testid="text-month-end-cash">
+              {formatCurrency(data.monthEndCash)}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">Net operating cash generated</p>
+            <p className="text-xs text-muted-foreground mt-1">Cash before next month's rent arrives</p>
           </CardContent>
         </Card>
 

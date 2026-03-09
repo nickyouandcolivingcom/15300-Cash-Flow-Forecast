@@ -26,7 +26,8 @@ A rolling 13-month cash flow forecasting web app for YOU & CO. LIVING LIMITED, a
 - Dynamic current cash position = opening balance + actuals through last completed day
 - 41 individual tenancy revenue lines from Xero invoices (account 200)
 - 75 supplier outflow lines from bank transaction data (one line per supplier)
-- Dashboard with charts showing cash trend and monthly flows
+- Dashboard with cash position trend chart and Month End Cash KPI
+  - Month End Cash = current cash + remaining commitments after today + last month's prepaid topline
 - Forecast rules engine (monthly, quarterly, quadrimestral, annual, one-off recurrence)
 - Monthly volume profiles for variable-volume lines (e.g. TDS deposits: 1/month, 2 in Jul-Sep)
 - Variance detection and classification (timing, permanent, one-off)
