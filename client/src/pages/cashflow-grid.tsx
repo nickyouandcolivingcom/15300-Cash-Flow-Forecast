@@ -346,7 +346,7 @@ export default function CashFlowGrid() {
                     <th className="sticky left-0 z-20 bg-muted/50 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider px-4 py-3 min-w-[240px]">
                       Cash Flow Line
                     </th>
-                    <th className="bg-muted/50 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-1 py-3 w-[40px]">
+                    <th className="sticky left-[240px] z-20 bg-muted/50 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider px-1 py-3 w-[40px]">
                       Due
                     </th>
                     {data.months.map((month) => (
@@ -481,7 +481,7 @@ function CategorySection({ category, lines, months, currentMonth, categoryTotals
               {row.recurrenceType === "quadrimestral" && <Badge variant="outline" className="text-[10px]">Periodic</Badge>}
             </div>
           </td>
-          <td className="text-center text-xs text-muted-foreground px-1 py-1.5 tabular-nums">
+          <td className="sticky left-[240px] z-10 bg-background text-center text-xs text-muted-foreground px-1 py-1.5 tabular-nums">
             {row.line.dueDay ? String(row.line.dueDay).padStart(2, "0") : ""}
           </td>
           {months.map(month => {
