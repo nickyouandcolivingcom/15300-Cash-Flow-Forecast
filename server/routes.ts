@@ -1286,70 +1286,42 @@ export async function registerRoutes(
 
   app.post("/api/fix-production", async (_req, res) => {
     try {
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE notes = 'fix-production-v2-applied' LIMIT 1`);
+      if (marker.rows?.length) {
+        return res.json({ success: false, message: "Fix already applied" });
+      }
+
       const results: string[] = [];
 
       await db.execute(sql`UPDATE cashflow_lines SET active = true WHERE code IN ('OUT-002', 'TR-DLA')`);
       results.push("Ensured OUT-002 and TR-DLA are active");
 
-      const salaryRow = await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = 'OUT-002'`);
       const dlaRow = await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = 'TR-DLA'`);
-      const salaryId = salaryRow.rows?.[0]?.id;
       const dlaId = dlaRow.rows?.[0]?.id;
-
-      const salaryRule = await db.execute(sql`SELECT base_amount, recurrence_type FROM forecast_rules WHERE cashflow_line_id = ${salaryId}`);
-      const dlaRule = await db.execute(sql`SELECT base_amount, recurrence_type FROM forecast_rules WHERE cashflow_line_id = ${dlaId}`);
-      results.push(`Salary rule: ${JSON.stringify(salaryRule.rows?.[0])}`);
-      results.push(`DLA rule: ${JSON.stringify(dlaRule.rows?.[0])}`);
-
-      const months = [];
-      const now = new Date();
-      const startYear = now.getFullYear();
-      const startMonth = now.getMonth() + 1;
-      for (let i = 0; i < 13; i++) {
-        const m = ((startMonth - 1 + i) % 12) + 1;
-        const y = startYear + Math.floor((startMonth - 1 + i) / 12);
-        months.push(`${y}-${String(m).padStart(2, "0")}`);
-      }
-
-      if (salaryId && salaryRule.rows?.[0]) {
-        const baseAmt = parseFloat(salaryRule.rows[0].base_amount as string);
-        const recurrence = salaryRule.rows[0].recurrence_type;
-        for (const month of months) {
-          const monthNum = parseInt(month.split("-")[1]);
-          let amt = "0.00";
-          if (recurrence === "annual" && monthNum === 4) amt = baseAmt.toFixed(2);
-          else if (recurrence === "monthly") amt = baseAmt.toFixed(2);
-          
-          const existing = await db.execute(sql`SELECT id FROM forecast_months WHERE cashflow_line_id = ${salaryId} AND forecast_month = ${month}`);
-          if (existing.rows?.length) {
-            await db.execute(sql`UPDATE forecast_months SET current_forecast_amount = ${amt} WHERE cashflow_line_id = ${salaryId} AND forecast_month = ${month} AND actual_amount IS NULL`);
-          } else {
-            await db.execute(sql`INSERT INTO forecast_months (cashflow_line_id, forecast_month, current_forecast_amount) VALUES (${salaryId}, ${month}, ${amt})`);
-          }
+      if (dlaId) {
+        const existingOverride = await db.execute(sql`SELECT id FROM overrides WHERE cashflow_line_id = ${dlaId} AND forecast_month = '2026-04'`);
+        if (!existingOverride.rows?.length) {
+          await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, notes) VALUES (${dlaId}, '2026-04', '7000.00', 'April: -3K DLA + 10K salary returned')`);
+          results.push("Created override for DLA April 2026 = +7000");
+        } else {
+          results.push("DLA April 2026 override already exists");
         }
-        results.push(`Salary forecasts set for ${months.length} months (annual in April = ${baseAmt})`);
       }
 
-      if (dlaId && dlaRule.rows?.[0]) {
-        const baseAmt = parseFloat(dlaRule.rows[0].base_amount as string);
-        for (const month of months) {
-          const amt = month === "2026-04" ? "7000.00" : baseAmt.toFixed(2);
-          const existing = await db.execute(sql`SELECT id FROM forecast_months WHERE cashflow_line_id = ${dlaId} AND forecast_month = ${month}`);
-          if (existing.rows?.length) {
-            await db.execute(sql`UPDATE forecast_months SET current_forecast_amount = ${amt} WHERE cashflow_line_id = ${dlaId} AND forecast_month = ${month} AND actual_amount IS NULL`);
-          } else {
-            await db.execute(sql`INSERT INTO forecast_months (cashflow_line_id, forecast_month, current_forecast_amount) VALUES (${dlaId}, ${month}, ${amt})`);
-          }
-        }
-        results.push(`DLA forecasts set for ${months.length} months (monthly = ${baseAmt}, April 2026 = +7000)`);
-      }
+      // Now regenerate forecasts so salary and DLA are properly populated
+      const { generateForecasts } = await import("./forecast-engine");
+      await generateForecasts();
+      results.push("Regenerated all forecasts (overrides preserved)");
+
+      // Mark as applied
+      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, notes) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v2-applied')`);
 
       const verify = await db.execute(sql`
         SELECT cl.code, cl.name, cl.active, fm.forecast_month, fm.current_forecast_amount 
         FROM cashflow_lines cl 
         JOIN forecast_months fm ON fm.cashflow_line_id = cl.id 
-        WHERE cl.code IN ('OUT-002', 'TR-DLA') AND fm.forecast_month >= '2026-04'
-        ORDER BY cl.code, fm.forecast_month LIMIT 10
+        WHERE cl.code IN ('OUT-002', 'TR-DLA') AND fm.forecast_month >= '2026-03'
+        ORDER BY cl.code, fm.forecast_month LIMIT 20
       `);
       res.json({ success: true, actions: results, verification: verify.rows });
     } catch (err: any) {
