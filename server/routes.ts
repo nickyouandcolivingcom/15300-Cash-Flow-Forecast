@@ -1240,7 +1240,7 @@ export async function registerRoutes(
 
     const currentMonthTxs = await storage.getTransactionsByMonth(currentMonth);
     const categoryBridge: Record<string, number> = {};
-    const bridgeCategories = ["Rent Revenue", "Recurring", "Tenancies", "Transfers", "Other"];
+    const bridgeCategories = ["Rent Revenue", "Recurring", "Tenancies", "Tradesmen", "Transfers", "Other"];
     for (const cat of bridgeCategories) categoryBridge[cat] = 0;
 
     for (const tx of currentMonthTxs) {
@@ -1286,9 +1286,9 @@ export async function registerRoutes(
 
   app.post("/api/fix-production", async (_req, res) => {
     try {
-      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v4-applied' LIMIT 1`);
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v5-applied' LIMIT 1`);
       if (marker.rows?.length) {
-        return res.json({ success: false, message: "Fix v4 already applied" });
+        return res.json({ success: false, message: "Fix v5 already applied" });
       }
 
       const results: string[] = [];
@@ -1348,11 +1348,73 @@ export async function registerRoutes(
       }
       results.push("Renamed 32LFR rooms: #1→#2, #2→#3, #3→#4, #4→#5, #5→#6, #6→#7");
 
+      const tradesmenLines = [
+        { code: 'TM-MAINT', name: 'MAINTENANCE', sub: 'Maintenance' },
+        { code: 'TM-GARDEN', name: 'GARDENING', sub: 'Gardening' },
+        { code: 'TM-COMPL', name: 'COMPLIANCE', sub: 'Compliance' },
+        { code: 'TM-OVENS', name: 'OVENS', sub: 'Ovens' },
+      ];
+      const bankAcctId = (await db.execute(sql`SELECT bank_account_id FROM cashflow_lines WHERE code = '27BLA#1' LIMIT 1`)).rows?.[0]?.bank_account_id || 6;
+      for (const tl of tradesmenLines) {
+        const exists = await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = ${tl.code}`);
+        if (!exists.rows?.length) {
+          await db.execute(sql`
+            INSERT INTO cashflow_lines (code, name, category, subcategory, supplier_name, bank_account_id, line_type, is_rollup, direction, active, sort_order, due_day)
+            VALUES (${tl.code}, ${tl.name}, 'Tradesmen', ${tl.sub}, ${tl.sub}, ${bankAcctId}, 'recurring_fixed', false, 'outflow', true, 0, null)
+          `);
+          results.push(`Created ${tl.code} ${tl.name}`);
+        }
+      }
+
+      const maintLine = await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = 'TM-MAINT'`);
+      const gardenLine = await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = 'TM-GARDEN'`);
+      const complLine = await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = 'TM-COMPL'`);
+      const ovensLine = await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = 'TM-OVENS'`);
+      const maintId = maintLine.rows?.[0]?.id;
+      const gardenId = gardenLine.rows?.[0]?.id;
+      const complId = complLine.rows?.[0]?.id;
+      const ovensId = ovensLine.rows?.[0]?.id;
+
+      if (maintId) {
+        const ruleExists = await db.execute(sql`SELECT id FROM forecast_rules WHERE cashflow_line_id = ${maintId}`);
+        if (!ruleExists.rows?.length) {
+          await db.execute(sql`INSERT INTO forecast_rules (cashflow_line_id, base_amount, recurrence_type, start_date, active, uplift_type) VALUES (${maintId}, '-1500.00', 'monthly', '2026-03-01', true, 'none')`);
+          results.push("Maintenance rule: -1500/month");
+        }
+      }
+      if (gardenId) {
+        const ruleExists = await db.execute(sql`SELECT id FROM forecast_rules WHERE cashflow_line_id = ${gardenId}`);
+        if (!ruleExists.rows?.length) {
+          const gv = '{"jan":0,"feb":0,"mar":0,"apr":1,"may":1,"jun":1,"jul":1,"aug":1,"sep":1,"oct":0,"nov":0,"dec":0}';
+          await db.execute(sql`INSERT INTO forecast_rules (cashflow_line_id, base_amount, recurrence_type, start_date, active, uplift_type, monthly_volumes) VALUES (${gardenId}, '-500.00', 'monthly', '2026-04-01', true, 'none', ${gv}::jsonb)`);
+          results.push("Gardening rule: -500/month Apr-Sep");
+        }
+      }
+      if (complId) {
+        const ruleExists = await db.execute(sql`SELECT id FROM forecast_rules WHERE cashflow_line_id = ${complId}`);
+        if (!ruleExists.rows?.length) {
+          const cv = '{"jan":240,"feb":0,"mar":470,"apr":70,"may":80,"jun":160,"jul":310,"aug":80,"sep":240,"oct":0,"nov":0,"dec":0}';
+          await db.execute(sql`INSERT INTO forecast_rules (cashflow_line_id, base_amount, recurrence_type, start_date, active, uplift_type, monthly_volumes) VALUES (${complId}, '-1.00', 'monthly', '2026-03-01', true, 'none', ${cv}::jsonb)`);
+          results.push("Compliance rule: variable monthly");
+        }
+      }
+      if (ovensId) {
+        const ruleExists = await db.execute(sql`SELECT id FROM forecast_rules WHERE cashflow_line_id = ${ovensId}`);
+        if (!ruleExists.rows?.length) {
+          await db.execute(sql`INSERT INTO forecast_rules (cashflow_line_id, base_amount, recurrence_type, start_date, active, uplift_type) VALUES (${ovensId}, '-500.00', 'semi_annual', '2026-04-01', true, 'none')`);
+          results.push("Ovens rule: -500 semi-annual Apr/Oct");
+        }
+      }
+
+      await db.execute(sql`UPDATE cashflow_lines SET active = true WHERE code = 'OUT-011'`);
+      await db.execute(sql`UPDATE forecast_rules SET active = true WHERE cashflow_line_id = (SELECT id FROM cashflow_lines WHERE code = 'OUT-011')`);
+      results.push("Reactivated BRIGHT & BEAUTIFUL (OUT-011)");
+
       const { generateForecasts } = await import("./forecast-engine");
       await generateForecasts();
-      results.push("Regenerated all forecasts (overrides preserved, 27BLA#2 included)");
+      results.push("Regenerated all forecasts");
 
-      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v4-applied')`);
+      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v5-applied')`);
 
       const verify = await db.execute(sql`
         SELECT cl.code, cl.name, cl.active, fm.forecast_month, fm.current_forecast_amount 
