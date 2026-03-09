@@ -1286,7 +1286,7 @@ export async function registerRoutes(
 
   app.post("/api/fix-production", async (_req, res) => {
     try {
-      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE notes = 'fix-production-v2-applied' LIMIT 1`);
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v2-applied' LIMIT 1`);
       if (marker.rows?.length) {
         return res.json({ success: false, message: "Fix already applied" });
       }
@@ -1301,20 +1301,18 @@ export async function registerRoutes(
       if (dlaId) {
         const existingOverride = await db.execute(sql`SELECT id FROM overrides WHERE cashflow_line_id = ${dlaId} AND forecast_month = '2026-04'`);
         if (!existingOverride.rows?.length) {
-          await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, notes) VALUES (${dlaId}, '2026-04', '7000.00', 'April: -3K DLA + 10K salary returned')`);
+          await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2026-04', '7000.00', 'April: -3K DLA + 10K salary returned')`);
           results.push("Created override for DLA April 2026 = +7000");
         } else {
           results.push("DLA April 2026 override already exists");
         }
       }
 
-      // Now regenerate forecasts so salary and DLA are properly populated
       const { generateForecasts } = await import("./forecast-engine");
       await generateForecasts();
       results.push("Regenerated all forecasts (overrides preserved)");
 
-      // Mark as applied
-      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, notes) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v2-applied')`);
+      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v2-applied')`);
 
       const verify = await db.execute(sql`
         SELECT cl.code, cl.name, cl.active, fm.forecast_month, fm.current_forecast_amount 
