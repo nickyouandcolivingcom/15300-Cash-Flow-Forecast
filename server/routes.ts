@@ -1188,6 +1188,23 @@ export async function registerRoutes(
     const totalOutflow = cashTrend.reduce((sum, t) => sum + t.outflow, 0);
     const freeCashFlow = totalInflow + totalOutflow;
 
+    const futureMonths = months.slice(1);
+    const salaryLine = lines.find(l => l.code === "OUT-002") || lines.find(l => l.name?.toUpperCase().includes("NICK DAVIDSON"));
+    const dlaLine = lines.find(l => l.code === "TR-DLA") || lines.find(l => l.name?.toUpperCase() === "DLA");
+    let annualNet = 0;
+    let annualSalary = 0;
+    let annualDLA = 0;
+    for (const month of futureMonths) {
+      for (const line of lines.filter(l => l.active && !l.isRollup && l.code !== "RENT-PRE")) {
+        const fc = forecasts.find(f => f.cashflowLineId === line.id && f.forecastMonth === month);
+        const amt = fc ? parseFloat(fc.currentForecastAmount as string) || 0 : 0;
+        annualNet += amt;
+        if (salaryLine && line.id === salaryLine.id) annualSalary += amt;
+        if (dlaLine && line.id === dlaLine.id) annualDLA += amt;
+      }
+    }
+    const annualGross = annualNet - annualSalary - annualDLA;
+
     const today = new Date();
     const currentDay = today.getDate();
     const activeNonRollup = lines.filter(l => l.active && !l.isRollup);
@@ -1255,6 +1272,7 @@ export async function registerRoutes(
       openingBalanceTotal,
       freeCashFlow,
       monthEndCash,
+      annualCash: { gross: annualGross, salary: annualSalary, dla: annualDLA, net: annualNet },
       totalInflow,
       totalOutflow,
       pendingVariances,

@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency, formatMonth } from "@/lib/format";
-import { TrendingUp, TrendingDown, AlertTriangle, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { TrendingUp, TrendingDown, ArrowUpRight } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
 interface DashboardData {
@@ -12,12 +12,14 @@ interface DashboardData {
   openingBalanceTotal: number;
   freeCashFlow: number;
   monthEndCash: number;
+  annualCash: { gross: number; salary: number; dla: number; net: number };
   totalInflow: number;
   totalOutflow: number;
   pendingVariances: number;
   cashTrend: { month: string; closing: number; inflow: number; outflow: number }[];
   bankAccounts: { id: number; name: string; currentBalance: string }[];
   months: string[];
+  categoryBridge: Record<string, number>;
 }
 
 export default function Dashboard() {
@@ -28,8 +30,8 @@ export default function Dashboard() {
   if (isLoading) {
     return (
       <div className="p-6 space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {[1, 2, 3, 4].map(i => (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[1, 2, 3].map(i => (
             <Card key={i}>
               <CardHeader className="pb-2">
                 <Skeleton className="h-4 w-24" />
@@ -49,6 +51,8 @@ export default function Dashboard() {
   }
 
   if (!data) return null;
+
+  const annualCash = data.annualCash || { gross: 0, salary: 0, dla: 0, net: 0 };
 
   const chartData = data.cashTrend.map(t => ({
     month: formatMonth(t.month),
@@ -70,7 +74,45 @@ export default function Dashboard() {
         </Badge>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Current Cash Position</CardTitle>
+            {data.lastActualDate && (
+              <span className="text-[10px] text-muted-foreground" data-testid="text-as-of-date">
+                {new Date(data.lastActualDate + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+              </span>
+            )}
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold" data-testid="text-cash-position">{formatCurrency(data.currentCashPosition)}</div>
+            <div className="mt-2 space-y-0.5">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] text-muted-foreground">Opening (1st)</p>
+                <p className="text-[11px] tabular-nums text-right text-muted-foreground">{formatCurrency(data.openingBalanceTotal)}</p>
+              </div>
+              {data.categoryBridge && [
+                { key: "Rent Revenue", label: "Rent Revenue" },
+                { key: "Recurring", label: "Recurring" },
+                { key: "Tenancies", label: "Tenancies" },
+                { key: "Transfers", label: "Transfers" },
+                { key: "Other", label: "Other" },
+              ].map(({ key, label }) => {
+                const val = data.categoryBridge[key] || 0;
+                if (val === 0) return null;
+                return (
+                  <div key={key} className="flex items-center justify-between gap-2" data-testid={`bridge-${key.toLowerCase().replace(/\s+/g, "-")}`}>
+                    <p className="text-[11px] text-muted-foreground pl-2">{label}</p>
+                    <p className={`text-[11px] tabular-nums text-right ${val >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                      {val >= 0 ? "+" : ""}{formatCurrency(val)}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Month End Cash</CardTitle>
@@ -86,29 +128,33 @@ export default function Dashboard() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Inflows (13m)</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Annual Cash</CardTitle>
             <ArrowUpRight className="h-4 w-4 text-emerald-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-total-inflow">{formatCurrency(data.totalInflow)}</div>
-            <p className="text-xs text-muted-foreground mt-1">Revenue & other receipts</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Pending Variances</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-amber-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-pending-variances">{data.pendingVariances}</div>
-            <p className="text-xs text-muted-foreground mt-1">Requires review</p>
+            <div className={`text-2xl font-bold ${annualCash.gross >= 0 ? "text-emerald-600" : "text-red-600"}`} data-testid="text-annual-cash-gross">
+              {formatCurrency(annualCash.gross)}
+            </div>
+            <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+              <div className="flex justify-between" data-testid="text-annual-cash-net">
+                <span>Net cash flow</span>
+                <span className="tabular-nums font-medium">{formatCurrency(annualCash.net)}</span>
+              </div>
+              <div className="flex justify-between" data-testid="text-annual-cash-salary">
+                <span>Less salary</span>
+                <span className="tabular-nums font-medium">{formatCurrency(annualCash.salary)}</span>
+              </div>
+              <div className="flex justify-between" data-testid="text-annual-cash-dla">
+                <span>Less DLA</span>
+                <span className="tabular-nums font-medium">{formatCurrency(annualCash.dla)}</span>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="lg:col-span-2">
+      <div className="grid grid-cols-1 gap-4">
+        <Card>
           <CardHeader>
             <CardTitle className="text-base font-medium">Closing Cash Trend</CardTitle>
           </CardHeader>
@@ -132,51 +178,6 @@ export default function Dashboard() {
                   <Area type="monotone" dataKey="closing" stroke="hsl(var(--primary))" fill="url(#cashGradient)" strokeWidth={2} />
                 </AreaChart>
               </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base font-medium">Current Cash Position</CardTitle>
-            {data.lastActualDate && (
-              <p className="text-[10px] text-muted-foreground" data-testid="text-as-of-date">
-                As of {new Date(data.lastActualDate + "T00:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}
-              </p>
-            )}
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs text-muted-foreground">Opening balance (1st)</p>
-              <p className="text-xs tabular-nums text-right text-muted-foreground">{formatCurrency(data.openingBalanceTotal)}</p>
-            </div>
-            {data.categoryBridge && (
-              <div className="space-y-1 py-1">
-                {[
-                  { key: "Rent Revenue", label: "Rent Revenue" },
-                  { key: "Recurring", label: "Recurring" },
-                  { key: "Tenancies", label: "Tenancies" },
-                  { key: "Transfers", label: "Transfers" },
-                  { key: "Other", label: "Other" },
-                ].map(({ key, label }) => {
-                  const val = data.categoryBridge[key] || 0;
-                  if (val === 0) return null;
-                  return (
-                    <div key={key} className="flex items-center justify-between gap-2" data-testid={`bridge-${key.toLowerCase().replace(/\s+/g, "-")}`}>
-                      <p className="text-[11px] text-muted-foreground pl-2">{label}</p>
-                      <p className={`text-[11px] tabular-nums text-right ${val >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                        {val >= 0 ? "+" : ""}{formatCurrency(val)}
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            <div className="border-t pt-2">
-              <div className="flex items-center justify-between gap-1">
-                <p className="text-sm font-medium">Position</p>
-                <p className="text-lg font-bold tabular-nums text-right" data-testid="text-cash-position">{formatCurrency(data.currentCashPosition)}</p>
-              </div>
             </div>
           </CardContent>
         </Card>
