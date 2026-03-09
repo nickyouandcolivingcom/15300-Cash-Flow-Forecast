@@ -1203,6 +1203,7 @@ export async function registerRoutes(
     if (prepaidLine) {
       const prepaidForecasts = await storage.getForecastMonths({ startMonth: currentMonth, endMonth: currentMonth });
       const prepaidFc = prepaidForecasts.find(f => f.cashflowLineId === prepaidLine.id);
+      console.log("RENT-PRE bridge debug:", { prepaidLineId: prepaidLine.id, found: !!prepaidFc, actualAmount: prepaidFc?.actualAmount, currentForecast: prepaidFc?.currentForecastAmount });
       const prepaidActual = prepaidFc?.actualAmount ? parseFloat(prepaidFc.actualAmount as string) : 0;
       if (Math.abs(prepaidActual) > 0.01) {
         categoryBridge["Rent Revenue"] += prepaidActual;
