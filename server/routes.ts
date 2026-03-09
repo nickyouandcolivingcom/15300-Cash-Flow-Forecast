@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import { db } from "./db";
 import { storage } from "./storage";
 import { generateForecasts, detectVariances, applyVarianceTreatment, reconcileCurrentMonth, getCurrentMonth, getNext12Months } from "./forecast-engine";
 import {
@@ -1201,10 +1202,9 @@ export async function registerRoutes(
 
     const prepaidLine = lines.find(l => l.code === "RENT-PRE");
     if (prepaidLine) {
-      const prepaidForecasts = await storage.getForecastMonths({ startMonth: currentMonth, endMonth: currentMonth });
-      const prepaidFc = prepaidForecasts.find(f => f.cashflowLineId === prepaidLine.id);
-      console.log("RENT-PRE bridge debug:", { prepaidLineId: prepaidLine.id, found: !!prepaidFc, actualAmount: prepaidFc?.actualAmount, currentForecast: prepaidFc?.currentForecastAmount });
-      const prepaidActual = prepaidFc?.actualAmount ? parseFloat(prepaidFc.actualAmount as string) : 0;
+      const rawResult = await db.execute(sql`SELECT actual_amount FROM forecast_months WHERE cashflow_line_id = ${prepaidLine.id} AND forecast_month = ${currentMonth}`);
+      const prepaidActual = rawResult.rows?.[0]?.actual_amount ? parseFloat(rawResult.rows[0].actual_amount as string) : 0;
+      console.log("RENT-PRE bridge debug:", { prepaidLineId: prepaidLine.id, rawActual: rawResult.rows?.[0]?.actual_amount, prepaidActual });
       if (Math.abs(prepaidActual) > 0.01) {
         categoryBridge["Rent Revenue"] += prepaidActual;
       }
