@@ -1272,6 +1272,7 @@ export async function registerRoutes(
       openingBalanceTotal,
       freeCashFlow,
       monthEndCash,
+      monthEndCashBreakdown: { cashPosition: currentCashPosition, remainingCommitments, lastMonthPrepaid },
       annualCash: { gross: annualGross, salary: annualSalary, dla: annualDLA, net: annualNet },
       totalInflow,
       totalOutflow,

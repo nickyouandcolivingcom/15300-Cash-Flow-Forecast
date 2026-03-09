@@ -12,6 +12,7 @@ interface DashboardData {
   openingBalanceTotal: number;
   freeCashFlow: number;
   monthEndCash: number;
+  monthEndCashBreakdown: { cashPosition: number; remainingCommitments: number; lastMonthPrepaid: number };
   annualCash: { gross: number; salary: number; dla: number; net: number };
   totalInflow: number;
   totalOutflow: number;
@@ -122,7 +123,22 @@ export default function Dashboard() {
             <div className={`text-2xl font-bold ${data.monthEndCash >= 0 ? "text-emerald-600" : "text-red-600"}`} data-testid="text-month-end-cash">
               {formatCurrency(data.monthEndCash)}
             </div>
-            <p className="text-xs text-muted-foreground mt-1">Cash before next month's rent arrives</p>
+            {data.monthEndCashBreakdown && (
+              <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+                <div className="flex justify-between" data-testid="text-mec-cash-position">
+                  <span>Cash today</span>
+                  <span className="tabular-nums font-medium">{formatCurrency(data.monthEndCashBreakdown.cashPosition)}</span>
+                </div>
+                <div className="flex justify-between" data-testid="text-mec-remaining">
+                  <span>Remaining commitments</span>
+                  <span className="tabular-nums font-medium">{formatCurrency(data.monthEndCashBreakdown.remainingCommitments)}</span>
+                </div>
+                <div className="flex justify-between" data-testid="text-mec-prepaid">
+                  <span>Prepaid topline</span>
+                  <span className="tabular-nums font-medium">{formatCurrency(data.monthEndCashBreakdown.lastMonthPrepaid)}</span>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
