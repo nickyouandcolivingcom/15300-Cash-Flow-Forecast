@@ -1312,9 +1312,28 @@ export async function registerRoutes(
         }
       }
 
-      const { generateForecasts } = await import("./forecast-engine");
-      await generateForecasts();
-      results.push("Regenerated all forecasts (overrides preserved)");
+      const existing27bla2 = await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = '27BLA#2'`);
+      if (!existing27bla2.rows?.length) {
+        const newLine = await db.execute(sql`
+          INSERT INTO cashflow_lines (code, name, category, subcategory, supplier_name, bank_account_id, line_type, is_rollup, parent_line_id, direction, active, sort_order, due_day)
+          VALUES ('27BLA#2', '27BLA#2 J HIBBERT', 'Rent Revenue', '27BLA', 'J HIBBERT', 
+            (SELECT bank_account_id FROM cashflow_lines WHERE code = '27BLA#1' LIMIT 1),
+            'recurring_fixed', false,
+            (SELECT parent_line_id FROM cashflow_lines WHERE code = '27BLA#1' LIMIT 1),
+            'inflow', true, 37, 11)
+          RETURNING id
+        `);
+        const newId = newLine.rows?.[0]?.id;
+        if (newId) {
+          await db.execute(sql`
+            INSERT INTO forecast_rules (cashflow_line_id, base_amount, recurrence_type, start_date, active, uplift_type)
+            VALUES (${newId}, '650.00', 'monthly', '2026-04-01', true, 'none')
+          `);
+          results.push(`Created 27BLA#2 J HIBBERT (id=${newId}) with £650/month from April 2026`);
+        }
+      } else {
+        results.push("27BLA#2 already exists");
+      }
 
       const renames = [
         { from: '32LFR#6', to: '32LFR#7', fromName: '32LFR#6 J LOWE', toName: '32LFR#7 J LOWE' },
@@ -1328,6 +1347,10 @@ export async function registerRoutes(
         await db.execute(sql`UPDATE cashflow_lines SET code = ${r.to}, name = ${r.toName} WHERE code = ${r.from}`);
       }
       results.push("Renamed 32LFR rooms: #1→#2, #2→#3, #3→#4, #4→#5, #5→#6, #6→#7");
+
+      const { generateForecasts } = await import("./forecast-engine");
+      await generateForecasts();
+      results.push("Regenerated all forecasts (overrides preserved, 27BLA#2 included)");
 
       await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v4-applied')`);
 
