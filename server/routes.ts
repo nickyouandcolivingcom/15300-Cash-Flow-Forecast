@@ -1286,22 +1286,9 @@ export async function registerRoutes(
 
   app.post("/api/fix-production", async (_req, res) => {
     try {
-      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v2-applied' LIMIT 1`);
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v3-applied' LIMIT 1`);
       if (marker.rows?.length) {
-        const diag = await db.execute(sql`
-          SELECT fr.id, fr.cashflow_line_id, fr.base_amount, fr.recurrence_type, fr.start_date, fr.end_date, fr.active, cl.code, cl.name
-          FROM forecast_rules fr
-          JOIN cashflow_lines cl ON cl.id = fr.cashflow_line_id
-          WHERE cl.code IN ('OUT-002', 'TR-DLA')
-        `);
-        const fcData = await db.execute(sql`
-          SELECT cl.code, fm.forecast_month, fm.current_forecast_amount, fm.actual_amount, fm.status
-          FROM forecast_months fm
-          JOIN cashflow_lines cl ON cl.id = fm.cashflow_line_id
-          WHERE cl.code IN ('OUT-002', 'TR-DLA')
-          ORDER BY cl.code, fm.forecast_month
-        `);
-        return res.json({ success: false, message: "Fix already applied", rules: diag.rows, forecasts: fcData.rows });
+        return res.json({ success: false, message: "Fix v3 already applied" });
       }
 
       const results: string[] = [];
@@ -1311,7 +1298,11 @@ export async function registerRoutes(
 
       const dlaRow = await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = 'TR-DLA'`);
       const dlaId = dlaRow.rows?.[0]?.id;
+
       if (dlaId) {
+        await db.execute(sql`UPDATE forecast_rules SET base_amount = '-3000.00' WHERE cashflow_line_id = ${dlaId} AND active = true`);
+        results.push("Fixed DLA forecast rule base_amount to -3000.00");
+
         const existingOverride = await db.execute(sql`SELECT id FROM overrides WHERE cashflow_line_id = ${dlaId} AND forecast_month = '2026-04'`);
         if (!existingOverride.rows?.length) {
           await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2026-04', '7000.00', 'April: -3K DLA + 10K salary returned')`);
@@ -1325,7 +1316,7 @@ export async function registerRoutes(
       await generateForecasts();
       results.push("Regenerated all forecasts (overrides preserved)");
 
-      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v2-applied')`);
+      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v3-applied')`);
 
       const verify = await db.execute(sql`
         SELECT cl.code, cl.name, cl.active, fm.forecast_month, fm.current_forecast_amount 
