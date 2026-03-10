@@ -1286,9 +1286,9 @@ export async function registerRoutes(
 
   app.post("/api/fix-production", async (_req, res) => {
     try {
-      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v5-applied' LIMIT 1`);
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v6-applied' LIMIT 1`);
       if (marker.rows?.length) {
-        return res.json({ success: false, message: "Fix v5 already applied" });
+        return res.json({ success: false, message: "Fix v6 already applied" });
       }
 
       const results: string[] = [];
@@ -1406,15 +1406,15 @@ export async function registerRoutes(
         }
       }
 
-      await db.execute(sql`UPDATE cashflow_lines SET active = true WHERE code = 'OUT-011'`);
+      await db.execute(sql`UPDATE cashflow_lines SET active = true, category = 'Recurring' WHERE code = 'OUT-011'`);
       await db.execute(sql`UPDATE forecast_rules SET active = true WHERE cashflow_line_id = (SELECT id FROM cashflow_lines WHERE code = 'OUT-011')`);
-      results.push("Reactivated BRIGHT & BEAUTIFUL (OUT-011)");
+      results.push("Reactivated BRIGHT & BEAUTIFUL (OUT-011) as Recurring");
 
       const { generateForecasts } = await import("./forecast-engine");
       await generateForecasts();
       results.push("Regenerated all forecasts");
 
-      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v5-applied')`);
+      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v6-applied')`);
 
       const verify = await db.execute(sql`
         SELECT cl.code, cl.name, cl.active, fm.forecast_month, fm.current_forecast_amount 
