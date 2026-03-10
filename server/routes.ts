@@ -1286,9 +1286,9 @@ export async function registerRoutes(
 
   app.post("/api/fix-production", async (_req, res) => {
     try {
-      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v6-applied' LIMIT 1`);
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v7-applied' LIMIT 1`);
       if (marker.rows?.length) {
-        return res.json({ success: false, message: "Fix v6 already applied" });
+        return res.json({ success: false, message: "Fix v7 already applied" });
       }
 
       const results: string[] = [];
@@ -1414,7 +1414,27 @@ export async function registerRoutes(
       await generateForecasts();
       results.push("Regenerated all forecasts");
 
-      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v6-applied')`);
+      const interbankLine = await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = 'TR-IB'`);
+      const interbankId = interbankLine.rows?.[0]?.id;
+      if (interbankId) {
+        await db.execute(sql`
+          UPDATE actual_transactions 
+          SET cashflow_line_id = ${interbankId}, mapped_confidence = 'high', mapping_method = 'bank_transfer_match'
+          WHERE description LIKE '%Bank Transfer%' AND cashflow_line_id IS NULL
+        `);
+        const starlingAcct = await db.execute(sql`SELECT id FROM bank_accounts WHERE name LIKE '%Starling%' LIMIT 1`);
+        const starlingId = starlingAcct.rows?.[0]?.id;
+        if (starlingId) {
+          await db.execute(sql`
+            UPDATE actual_transactions 
+            SET amount = ABS(amount)
+            WHERE description LIKE 'Bank Transfer from%' AND amount < 0 AND bank_account_id = ${starlingId}
+          `);
+        }
+        results.push("Fixed bank transfers: mapped to INTERBANK, corrected Starling inflow signs");
+      }
+
+      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v7-applied')`);
 
       const verify = await db.execute(sql`
         SELECT cl.code, cl.name, cl.active, fm.forecast_month, fm.current_forecast_amount 

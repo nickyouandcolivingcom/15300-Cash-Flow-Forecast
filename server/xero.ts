@@ -366,7 +366,8 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
 
           const contactName = tx.Contact?.Name || "";
           const description = tx.Reference || tx.LineItems?.[0]?.Description || contactName;
-          const amount = tx.Type === "RECEIVE" ? Math.abs(tx.Total) : -Math.abs(tx.Total);
+          const isInflow = tx.Type === "RECEIVE" || tx.Type === "RECEIVE-TRANSFER";
+          const amount = isInflow ? Math.abs(tx.Total) : -Math.abs(tx.Total);
 
           let txDate: string;
           if (typeof tx.Date === "string" && tx.Date.startsWith("/Date(")) {
@@ -382,27 +383,43 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
           let confidence = "unmatched";
           let method = "none";
 
-          const supplierMatch = cashflowLines.find(
-            l => l.supplierName && contactName && contactName.toLowerCase().includes(l.supplierName.toLowerCase())
-          );
-          if (supplierMatch) {
-            matchedLineId = supplierMatch.id;
-            confidence = "high";
-            method = "supplier_match";
-          } else {
-            const nameMatch = cashflowLines.find(
-              l => {
-                const words = l.name.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
-                return words.some((w: string) =>
-                  contactName.toLowerCase().includes(w) ||
-                  (description && description.toLowerCase().includes(w))
-                );
-              }
+          const isBankTransfer = tx.Type === "SPEND-TRANSFER" || tx.Type === "RECEIVE-TRANSFER" ||
+            (description && description.toLowerCase().includes("bank transfer")) ||
+            (tx.Type === "SPEND" && description && /bank transfer to/i.test(description)) ||
+            (tx.Type === "RECEIVE" && description && /bank transfer from/i.test(description));
+
+          if (isBankTransfer) {
+            const interbankLine = cashflowLines.find(l => l.code === "TR-IB");
+            if (interbankLine) {
+              matchedLineId = interbankLine.id;
+              confidence = "high";
+              method = "bank_transfer_match";
+            }
+          }
+
+          if (!matchedLineId) {
+            const supplierMatch = cashflowLines.find(
+              l => l.supplierName && contactName && contactName.toLowerCase().includes(l.supplierName.toLowerCase())
             );
-            if (nameMatch) {
-              matchedLineId = nameMatch.id;
-              confidence = "medium";
-              method = "keyword_match";
+            if (supplierMatch) {
+              matchedLineId = supplierMatch.id;
+              confidence = "high";
+              method = "supplier_match";
+            } else {
+              const nameMatch = cashflowLines.find(
+                l => {
+                  const words = l.name.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
+                  return words.some((w: string) =>
+                    contactName.toLowerCase().includes(w) ||
+                    (description && description.toLowerCase().includes(w))
+                  );
+                }
+              );
+              if (nameMatch) {
+                matchedLineId = nameMatch.id;
+                confidence = "medium";
+                method = "keyword_match";
+              }
             }
           }
 
