@@ -1286,9 +1286,9 @@ export async function registerRoutes(
 
   app.post("/api/fix-production", async (_req, res) => {
     try {
-      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v8-applied' LIMIT 1`);
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v9-applied' LIMIT 1`);
       if (marker.rows?.length) {
-        return res.json({ success: false, message: "Fix v8 already applied" });
+        return res.json({ success: false, message: "Fix v9 already applied" });
       }
 
       const results: string[] = [];
@@ -1476,7 +1476,17 @@ export async function registerRoutes(
       }
       results.push("Remapped OTT DEBIT FX charges to USD suppliers or SANT-FEE");
 
-      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v8-applied')`);
+      const depLineId = (await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = 'TEN-DEPIO'`)).rows?.[0]?.id;
+      if (depLineId) {
+        await db.execute(sql`
+          UPDATE actual_transactions 
+          SET cashflow_line_id = ${depLineId}, mapped_confidence = 'high', mapping_method = 'deposit_match'
+          WHERE supplier_or_counterparty = 'HAMED KARGBO' AND description IN ('DEPOSIT IN LATER REFUNDED', 'DEPOSIT OUT REFUNDED')
+        `);
+        results.push("Mapped HAMED KARGBO deposit in/out to DEPOSITS IN/OUT");
+      }
+
+      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v9-applied')`);
 
       const verify = await db.execute(sql`
         SELECT cl.code, cl.name, cl.active, fm.forecast_month, fm.current_forecast_amount 
