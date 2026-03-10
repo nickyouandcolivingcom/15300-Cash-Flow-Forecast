@@ -398,6 +398,19 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
           }
 
           if (!matchedLineId) {
+            const isFxCharge = (description === "OTT DEBIT" || description === "FEES AND CHARGES" || description === "MONTHLY CORPORATE ACCOUNT CHARGE") 
+              && contactName === "SANTANDER BUSINESS";
+            if (isFxCharge) {
+              const santFeeLine = cashflowLines.find(l => l.code === "SANT-FEE");
+              if (santFeeLine) {
+                matchedLineId = santFeeLine.id;
+                confidence = "medium";
+                method = "fx_fee_match";
+              }
+            }
+          }
+
+          if (!matchedLineId) {
             const supplierMatch = cashflowLines.find(
               l => l.supplierName && contactName && contactName.toLowerCase().includes(l.supplierName.toLowerCase())
             );
@@ -455,6 +468,38 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
       }
     }
 
+  }
+
+  try {
+    const usdSupplierCodes = ['OUT-046', 'OUT-052', 'OUT-036', 'OUT-070'];
+    const usdSupplierLines = cashflowLines.filter(l => usdSupplierCodes.includes(l.code));
+    const usdSupplierIds = usdSupplierLines.map(l => l.id);
+    if (usdSupplierIds.length > 0) {
+      const santFee = cashflowLines.find(l => l.code === "SANT-FEE");
+      const allTxs = await storage.getActualTransactions({});
+      const ottTxs = allTxs.filter(t => 
+        t.description === "OTT DEBIT" && 
+        t.supplierOrCounterparty === "SANTANDER BUSINESS" &&
+        (!t.cashflowLineId || t.cashflowLineId === santFee?.id)
+      );
+      for (const ott of ottTxs) {
+        const sameDaySupplier = allTxs.find(t => 
+          t.transactionDate === ott.transactionDate && 
+          t.id !== ott.id && 
+          t.cashflowLineId && 
+          usdSupplierIds.includes(t.cashflowLineId)
+        );
+        if (sameDaySupplier && sameDaySupplier.cashflowLineId) {
+          await storage.updateActualTransaction(ott.id, { 
+            cashflowLineId: sameDaySupplier.cashflowLineId,
+            mappedConfidence: "high",
+            mappingMethod: "fx_same_day_match"
+          });
+        }
+      }
+    }
+  } catch (fxErr: any) {
+    console.error("FX remapping error:", fxErr.message);
   }
 
   await storage.createAuditLog({

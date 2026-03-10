@@ -1286,9 +1286,9 @@ export async function registerRoutes(
 
   app.post("/api/fix-production", async (_req, res) => {
     try {
-      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v7-applied' LIMIT 1`);
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v8-applied' LIMIT 1`);
       if (marker.rows?.length) {
-        return res.json({ success: false, message: "Fix v7 already applied" });
+        return res.json({ success: false, message: "Fix v8 already applied" });
       }
 
       const results: string[] = [];
@@ -1434,7 +1434,49 @@ export async function registerRoutes(
         results.push("Fixed bank transfers: mapped to INTERBANK, corrected Starling inflow signs");
       }
 
-      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v7-applied')`);
+      const interbankId2 = interbankLine.rows?.[0]?.id;
+      const santFeeId = (await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = 'SANT-FEE'`)).rows?.[0]?.id;
+      const bbLoanId = (await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = 'OUT-014'`)).rows?.[0]?.id;
+      
+      if (santFeeId && bbLoanId) {
+        await db.execute(sql`
+          UPDATE actual_transactions 
+          SET cashflow_line_id = ${santFeeId}, mapped_confidence = 'high', mapping_method = 'fee_match'
+          WHERE supplier_or_counterparty = 'SANTANDER BUSINESS'
+            AND (description = 'FEES AND CHARGES' OR description = 'MONTHLY CORPORATE ACCOUNT CHARGE' OR (description = 'SANTANDER BUSINESS' AND amount = -9.99))
+            AND cashflow_line_id = ${bbLoanId}
+        `);
+        results.push("Remapped bank fees from BB loan to SANT-FEE");
+      }
+
+      const usdCodes = ['OUT-046', 'OUT-052', 'OUT-036', 'OUT-070'];
+      for (const code of usdCodes) {
+        const line = await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = ${code}`);
+        const lineId = line.rows?.[0]?.id;
+        if (lineId) {
+          await db.execute(sql`
+            UPDATE actual_transactions ott
+            SET cashflow_line_id = ${lineId}, mapped_confidence = 'high', mapping_method = 'fx_same_day_match'
+            FROM actual_transactions supplier_tx
+            WHERE ott.description = 'OTT DEBIT'
+              AND ott.supplier_or_counterparty = 'SANTANDER BUSINESS'
+              AND supplier_tx.transaction_date = ott.transaction_date
+              AND supplier_tx.id != ott.id
+              AND supplier_tx.cashflow_line_id = ${lineId}
+          `);
+        }
+      }
+      if (santFeeId) {
+        await db.execute(sql`
+          UPDATE actual_transactions 
+          SET cashflow_line_id = ${santFeeId}, mapped_confidence = 'medium', mapping_method = 'fx_fee_fallback'
+          WHERE description = 'OTT DEBIT' AND supplier_or_counterparty = 'SANTANDER BUSINESS'
+            AND cashflow_line_id = ${bbLoanId}
+        `);
+      }
+      results.push("Remapped OTT DEBIT FX charges to USD suppliers or SANT-FEE");
+
+      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v8-applied')`);
 
       const verify = await db.execute(sql`
         SELECT cl.code, cl.name, cl.active, fm.forecast_month, fm.current_forecast_amount 
