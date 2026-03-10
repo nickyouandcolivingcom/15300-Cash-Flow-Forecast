@@ -229,7 +229,7 @@ export async function fetchBankBalances(): Promise<{ totalBalance: number; accou
   const today = new Date().toISOString().split("T")[0];
   let reportData: any;
   try {
-    reportData = await xeroApiGet(`Reports/BankSummary?fromDate=${today}&toDate=${today}`);
+    reportData = await xeroApiGet(`Reports/BankSummary`);
     console.log("Bank Summary report response:", JSON.stringify(reportData).substring(0, 2000));
   } catch (e: any) {
     console.error("Bank Summary report failed, trying account-level approach:", e.message);
