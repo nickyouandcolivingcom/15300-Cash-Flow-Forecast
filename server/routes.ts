@@ -1203,40 +1203,7 @@ export async function registerRoutes(
     }
     const annualGross = annualNet - annualSalary - annualDLA;
 
-    const today = new Date();
-    const currentDay = today.getDate();
     const activeNonRollup = lines.filter(l => l.active && !l.isRollup);
-    let remainingCommitments = 0;
-    for (const line of activeNonRollup) {
-      if (line.code === "RENT-PRE") continue;
-      if (line.direction === "inflow") continue;
-      const fc = forecasts.find(f => f.cashflowLineId === line.id && f.forecastMonth === currentMonth);
-      if (!fc) continue;
-      const fcActual = fc.actualAmount ? parseFloat(fc.actualAmount as string) : null;
-      if (fcActual !== null) continue;
-      const dueDay = line.dueDay;
-      if (dueDay !== null && dueDay <= currentDay) continue;
-      const amt = parseFloat(fc.currentForecastAmount as string) || 0;
-      if (amt === 0) continue;
-      remainingCommitments += amt;
-    }
-
-    const prepaidLine = lines.find(l => l.code === "RENT-PRE");
-    let lastMonthPrepaid = 0;
-    if (prepaidLine) {
-      const [cy, cm] = currentMonth.split("-").map(Number);
-      const prevM = cm === 1 ? 12 : cm - 1;
-      const prevY = cm === 1 ? cy - 1 : cy;
-      const lastMonth = `${prevY}-${String(prevM).padStart(2, "0")}`;
-      const lastMonthForecasts = await storage.getForecastMonths({ cashflowLineId: prepaidLine.id, startMonth: lastMonth, endMonth: lastMonth });
-      const lastPrepaidFc = lastMonthForecasts[0];
-      if (lastPrepaidFc) {
-        const prepaidVal = lastPrepaidFc.actualAmount ? parseFloat(lastPrepaidFc.actualAmount as string) : (parseFloat(lastPrepaidFc.currentForecastAmount as string) || 0);
-        lastMonthPrepaid = prepaidVal;
-      }
-    }
-
-    const monthEndCash = currentCashPosition + remainingCommitments + lastMonthPrepaid;
 
     const currentMonthTxs = await storage.getTransactionsByMonth(currentMonth);
     const categoryBridge: Record<string, number> = {};
@@ -1266,6 +1233,7 @@ export async function registerRoutes(
       categoryBridge[normalizedCat] += amt;
     }
 
+    const prepaidLine = lines.find(l => l.code === "RENT-PRE");
     if (prepaidLine) {
       const prepaidFc = forecasts.find(f => f.cashflowLineId === prepaidLine.id && f.forecastMonth === currentMonth);
       const prepaidFromForecast = prepaidFc?.actualAmount ? parseFloat(prepaidFc.actualAmount as string) : null;
@@ -1276,13 +1244,15 @@ export async function registerRoutes(
       }
     }
 
+    const bridgeTotal = Object.values(categoryBridge).reduce((sum, val) => sum + val, 0);
+    const monthEndCash = openingBalanceTotal + bridgeTotal;
+
     res.json({
       currentCashPosition,
       lastActualDate,
       openingBalanceTotal,
       freeCashFlow,
       monthEndCash,
-      monthEndCashBreakdown: { cashPosition: currentCashPosition, remainingCommitments, lastMonthPrepaid },
       annualCash: { gross: annualGross, salary: annualSalary, dla: annualDLA, net: annualNet },
       totalInflow,
       totalOutflow,
