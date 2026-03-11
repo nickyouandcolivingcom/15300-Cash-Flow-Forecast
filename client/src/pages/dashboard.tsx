@@ -96,6 +96,7 @@ export default function Dashboard() {
                 { key: "Rent Revenue", label: "Rent Revenue" },
                 { key: "Recurring", label: "Recurring" },
                 { key: "Tenancies", label: "Tenancies" },
+                { key: "Tradesmen", label: "Tradesmen" },
                 { key: "Transfers", label: "Transfers" },
                 { key: "Other", label: "Other" },
               ].map(({ key, label }) => {

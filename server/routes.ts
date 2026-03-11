@@ -1296,9 +1296,9 @@ export async function registerRoutes(
 
   app.post("/api/fix-production", async (_req, res) => {
     try {
-      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v9-applied' LIMIT 1`);
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v10-applied' LIMIT 1`);
       if (marker.rows?.length) {
-        return res.json({ success: false, message: "Fix v9 already applied" });
+        return res.json({ success: false, message: "Fix v10 already applied" });
       }
 
       const results: string[] = [];
@@ -1496,7 +1496,7 @@ export async function registerRoutes(
         results.push("Mapped HAMED KARGBO deposit in/out to DEPOSITS IN/OUT");
       }
 
-      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v9-applied')`);
+      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-01', '0', 'fix-production-v10-applied')`);
 
       const verify = await db.execute(sql`
         SELECT cl.code, cl.name, cl.active, fm.forecast_month, fm.current_forecast_amount 
