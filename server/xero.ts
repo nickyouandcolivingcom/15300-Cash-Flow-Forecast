@@ -497,6 +497,121 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
   }
 
   for (const ba of activeBankAccounts) {
+    let paymentPage = 1;
+    let paymentHasMore = true;
+    while (paymentHasMore) {
+      try {
+        const data = await xeroApiGet(
+          `Payments?where=Date>%3DDateTime(${startDate.getFullYear()},${startDate.getMonth() + 1},${startDate.getDate()})&order=Date%20DESC&page=${paymentPage}`
+        );
+        const payments = data.Payments || [];
+        console.log(`Fetched ${payments.length} payments for page ${paymentPage}`);
+
+        if (payments.length === 0) {
+          paymentHasMore = false;
+          break;
+        }
+
+        for (const pmt of payments) {
+          if (pmt.Status === "DELETED" || pmt.Status === "VOIDED") continue;
+          const pmtId = pmt.PaymentID;
+          if (!pmtId) continue;
+          if (existingXeroIds.has(pmtId)) continue;
+
+          const pmtAccountId = pmt.Account?.AccountID || "";
+          if (pmtAccountId !== ba.xeroAccountId) continue;
+
+          let pmtDate: string;
+          if (typeof pmt.Date === "string" && pmt.Date.startsWith("/Date(")) {
+            const ms = parseInt(pmt.Date.match(/\d+/)?.[0] || "0");
+            pmtDate = new Date(ms).toISOString().split("T")[0];
+          } else if (typeof pmt.Date === "string" && pmt.Date.includes("T")) {
+            pmtDate = pmt.Date.split("T")[0];
+          } else {
+            pmtDate = String(pmt.Date);
+          }
+
+
+          const contactName = pmt.Invoice?.Contact?.Name || "";
+          const invoiceNumber = pmt.Invoice?.InvoiceNumber || "";
+          const description = pmt.Reference || invoiceNumber || "Payment";
+          const isInflow = pmt.PaymentType === "ACCRECPAYMENT";
+          const amount = isInflow ? Math.abs(pmt.Amount) : -Math.abs(pmt.Amount);
+
+          const existingByDateAndAmount = existingTransactions.find(t => {
+            const tDate = typeof t.transactionDate === 'string' ? t.transactionDate : (t.transactionDate as Date)?.toISOString?.()?.split("T")?.[0];
+            const tAmt = parseFloat(t.amount as string);
+            return tDate === pmtDate && Math.abs(tAmt - amount) < 0.01 && t.bankAccountId === ba.id;
+          });
+          if (existingByDateAndAmount) continue;
+
+          const paymentProcessorAliases: Record<string, string> = {
+            "GOCARDLESS": "ARTHUR",
+          };
+
+          let matchedLineId: number | null = null;
+          let confidence = "unmatched";
+          let method = "none";
+
+          const resolvedName = paymentProcessorAliases[contactName.toUpperCase()] || contactName;
+          const supplierMatch = cashflowLines.find(
+            l => l.supplierName && resolvedName && resolvedName.toLowerCase().includes(l.supplierName.toLowerCase())
+          );
+          if (supplierMatch) {
+            matchedLineId = supplierMatch.id;
+            confidence = "high";
+            method = "supplier_match";
+          } else {
+            const nameMatch = cashflowLines.find(
+              l => {
+                const words = l.name.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
+                return words.some((w: string) =>
+                  resolvedName.toLowerCase().includes(w) ||
+                  contactName.toLowerCase().includes(w) ||
+                  description.toLowerCase().includes(w)
+                );
+              }
+            );
+            if (nameMatch) {
+              matchedLineId = nameMatch.id;
+              confidence = "medium";
+              method = "keyword_match";
+            }
+          }
+
+          await storage.createActualTransaction({
+            xeroTransactionId: pmtId,
+            xeroSourceType: pmt.PaymentType,
+            transactionDate: pmtDate,
+            amount: String(amount),
+            description,
+            supplierOrCounterparty: contactName,
+            bankAccountId: ba.id,
+            cashflowLineId: matchedLineId,
+            mappedConfidence: confidence,
+            mappingMethod: method,
+            reconciledFlag: pmt.IsReconciled || true,
+          });
+
+          existingXeroIds.add(pmtId);
+          imported++;
+          if (matchedLineId) mapped++;
+          console.log(`Imported payment: ${pmtDate} ${contactName} ${amount}`);
+        }
+
+        if (payments.length < 100) {
+          paymentHasMore = false;
+        } else {
+          paymentPage++;
+        }
+      } catch (err: any) {
+        console.log(`Payments import error: ${err.message}`);
+        paymentHasMore = false;
+      }
+    }
+  }
+
+  for (const ba of activeBankAccounts) {
     try {
       const fromDate = startDate.toISOString().split("T")[0];
       const toDate = new Date().toISOString().split("T")[0];
