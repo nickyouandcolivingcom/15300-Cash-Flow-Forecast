@@ -49,7 +49,6 @@ const SCOPES = [
   "accounting.settings.read",
   "accounting.contacts.read",
   "accounting.reports.banksummary.read",
-  "finance.bankstatementsplus.read",
   "offline_access",
 ];
 
@@ -607,9 +606,7 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
       }
       console.log(`Imported ${stmtImported} new statement lines for ${ba.name}`);
     } catch (err: any) {
-      const msg = `Statement lines import for ${ba.name}: ${err.message}`;
-      console.log(msg);
-      errors.push(msg);
+      console.log(`Statement lines import for ${ba.name} skipped: ${err.message}`);
     }
   }
 
