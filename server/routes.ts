@@ -1243,11 +1243,27 @@ export async function registerRoutes(
     const bridgeCategories = ["Rent Revenue", "Recurring", "Tenancies", "Tradesmen", "Transfers", "Other"];
     for (const cat of bridgeCategories) categoryBridge[cat] = 0;
 
+    const linesWithTxs = new Set<number>();
     for (const tx of currentMonthTxs) {
       const line = tx.cashflowLineId ? lines.find(l => l.id === tx.cashflowLineId) : null;
+      if (line) linesWithTxs.add(line.id);
       const cat = line?.category || "Other";
       const normalizedCat = bridgeCategories.includes(cat) ? cat : "Other";
       categoryBridge[normalizedCat] += parseFloat(tx.amount as string) || 0;
+    }
+
+    for (const line of activeNonRollup) {
+      if (line.code === "RENT-PRE") continue;
+      if (linesWithTxs.has(line.id)) continue;
+      const fc = forecasts.find(f => f.cashflowLineId === line.id && f.forecastMonth === currentMonth);
+      if (!fc) continue;
+      const fcActual = fc.actualAmount ? parseFloat(fc.actualAmount as string) : null;
+      if (fcActual !== null) continue;
+      const amt = parseFloat(fc.currentForecastAmount as string) || 0;
+      if (amt === 0) continue;
+      const cat = line.category || "Other";
+      const normalizedCat = bridgeCategories.includes(cat) ? cat : "Other";
+      categoryBridge[normalizedCat] += amt;
     }
 
     if (prepaidLine) {
@@ -1258,12 +1274,6 @@ export async function registerRoutes(
       if (Math.abs(prepaidActual) > 0.01) {
         categoryBridge["Rent Revenue"] += prepaidActual;
       }
-    }
-
-    const movementsTotal = Object.values(categoryBridge).reduce((sum, val) => sum + val, 0);
-    const reconcilingDiff = currentCashPosition - openingBalanceTotal - movementsTotal;
-    if (Math.abs(reconcilingDiff) > 0.01) {
-      categoryBridge["Other"] += reconcilingDiff;
     }
 
     res.json({
