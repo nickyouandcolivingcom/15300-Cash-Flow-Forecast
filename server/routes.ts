@@ -1264,6 +1264,67 @@ export async function registerRoutes(
     });
   });
 
+  app.get("/api/debug-xero-march10", async (_req, res) => {
+    try {
+      const { xeroApiGet, isXeroConnected } = await import("./xero");
+      const connected = await isXeroConnected();
+      if (!connected.connected) return res.json({ error: "Not connected to Xero" });
+
+      const santanderId = "d1540370-4214-4637-b4fa-d48bcdb8749e";
+
+      const bankTxData = await xeroApiGet(
+        `BankTransactions?where=BankAccount.AccountID%3D%3DGuid("${santanderId}")%26%26Date%3D%3DDateTime(2026,3,10)&order=Date%20DESC`
+      );
+      const bankTxs = (bankTxData.BankTransactions || []).map((tx: any) => ({
+        id: tx.BankTransactionID,
+        type: tx.Type,
+        status: tx.Status,
+        date: tx.Date,
+        total: tx.Total,
+        contact: tx.Contact?.Name,
+        ref: tx.Reference,
+        lineDesc: tx.LineItems?.[0]?.Description,
+        isReconciled: tx.IsReconciled,
+      }));
+
+      const pmtData = await xeroApiGet(
+        `Payments?where=Date%3D%3DDateTime(2026,3,10)&order=Date%20DESC`
+      );
+      const payments = (pmtData.Payments || []).map((p: any) => ({
+        id: p.PaymentID,
+        type: p.PaymentType,
+        status: p.Status,
+        date: p.Date,
+        amount: p.Amount,
+        contact: p.Invoice?.Contact?.Name,
+        invoiceNum: p.Invoice?.InvoiceNumber,
+        accountId: p.Account?.AccountID,
+        ref: p.Reference,
+      }));
+
+      const existingTxs = await storage.getActualTransactions({});
+      const march10 = existingTxs.filter(t => {
+        const d = typeof t.transactionDate === 'string' ? t.transactionDate : '';
+        return d.startsWith('2026-03-10');
+      });
+
+      res.json({
+        xeroBankTransactions: bankTxs,
+        xeroPayments: payments,
+        existingMarch10: march10.map(t => ({
+          id: t.id,
+          xeroId: t.xeroTransactionId,
+          type: t.xeroSourceType,
+          amount: t.amount,
+          desc: t.description,
+          supplier: t.supplierOrCounterparty,
+        })),
+      });
+    } catch (err: any) {
+      res.json({ error: err.message });
+    }
+  });
+
   app.post("/api/fix-production", async (_req, res) => {
     try {
       const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v10-applied' LIMIT 1`);

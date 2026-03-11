@@ -192,7 +192,7 @@ async function getValidToken(): Promise<{ accessToken: string; tenantId: string 
   return { accessToken: token.accessToken, tenantId: token.tenantId };
 }
 
-async function xeroApiGet(path: string): Promise<any> {
+export async function xeroApiGet(path: string): Promise<any> {
   const auth = await getValidToken();
   if (!auth) throw new Error("Not connected to Xero");
 
