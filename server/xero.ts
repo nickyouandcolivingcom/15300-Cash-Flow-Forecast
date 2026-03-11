@@ -212,6 +212,26 @@ async function xeroApiGet(path: string): Promise<any> {
   return response.json();
 }
 
+async function xeroFinanceApiGet(path: string): Promise<any> {
+  const auth = await getValidToken();
+  if (!auth) throw new Error("Not connected to Xero");
+
+  const response = await fetch(`https://api.xero.com/finance.xro/1.0/${path}`, {
+    headers: {
+      Authorization: `Bearer ${auth.accessToken}`,
+      "Xero-Tenant-Id": auth.tenantId,
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Xero Finance API error: ${response.status} ${errText}`);
+  }
+
+  return response.json();
+}
+
 export async function isXeroConnected(): Promise<{ connected: boolean; tenantName?: string }> {
   const auth = await getValidToken();
   if (!auth) return { connected: false };
@@ -410,9 +430,14 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
             }
           }
 
+          const paymentProcessorAliases: Record<string, string> = {
+            "GOCARDLESS": "ARTHUR",
+          };
+
           if (!matchedLineId) {
+            const resolvedName = paymentProcessorAliases[contactName.toUpperCase()] || contactName;
             const supplierMatch = cashflowLines.find(
-              l => l.supplierName && contactName && contactName.toLowerCase().includes(l.supplierName.toLowerCase())
+              l => l.supplierName && resolvedName && resolvedName.toLowerCase().includes(l.supplierName.toLowerCase())
             );
             if (supplierMatch) {
               matchedLineId = supplierMatch.id;
@@ -423,6 +448,7 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
                 l => {
                   const words = l.name.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
                   return words.some((w: string) =>
+                    resolvedName.toLowerCase().includes(w) ||
                     contactName.toLowerCase().includes(w) ||
                     (description && description.toLowerCase().includes(w))
                   );
@@ -468,6 +494,116 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
       }
     }
 
+  }
+
+  for (const ba of activeBankAccounts) {
+    try {
+      const fromDate = startDate.toISOString().split("T")[0];
+      const toDate = new Date().toISOString().split("T")[0];
+      const statementsData = await xeroFinanceApiGet(
+        `BankStatements?bankAccountId=${ba.xeroAccountId}&fromDate=${fromDate}&toDate=${toDate}`
+      );
+      const statements = statementsData?.statements || [];
+      for (const stmt of statements) {
+        const stmtLines = stmt?.statementLines || [];
+        for (const sl of stmtLines) {
+          const slId = sl.statementLineId;
+          if (!slId) continue;
+          if (existingXeroIds.has(slId)) continue;
+
+          const alreadyMatched = existingXeroIds.has(sl.paymentId || "");
+          if (alreadyMatched) continue;
+
+          const isCredit = sl.creditAmount && parseFloat(sl.creditAmount) > 0;
+          const amount = isCredit
+            ? Math.abs(parseFloat(sl.creditAmount || "0"))
+            : -Math.abs(parseFloat(sl.debitAmount || "0"));
+
+          if (amount === 0) continue;
+
+          const txDate = sl.postedDate ? sl.postedDate.split("T")[0] : "";
+          if (!txDate) continue;
+
+          const description = sl.description || sl.payeeName || "";
+          const payeeName = sl.payeeName || "";
+
+          const existingByDateAndAmount = existingTransactions.find(t => {
+            const tDate = typeof t.transactionDate === 'string' ? t.transactionDate : (t.transactionDate as Date)?.toISOString?.()?.split("T")?.[0];
+            const tAmt = parseFloat(t.amount as string);
+            return tDate === txDate && Math.abs(tAmt - amount) < 0.01 && t.bankAccountId === ba.id;
+          });
+          if (existingByDateAndAmount) continue;
+
+          let matchedLineId: number | null = null;
+          let confidence = "unmatched";
+          let method = "none";
+
+          const isBankTransfer = description.toLowerCase().includes("bank transfer") ||
+            payeeName.toLowerCase().includes("bank transfer");
+          if (isBankTransfer) {
+            const interbankLine = cashflowLines.find(l => l.code === "TR-IB");
+            if (interbankLine) {
+              matchedLineId = interbankLine.id;
+              confidence = "high";
+              method = "bank_transfer_match";
+            }
+          }
+
+          if (!matchedLineId) {
+            const stmtPaymentProcessorAliases: Record<string, string> = {
+              "GOCARDLESS": "ARTHUR",
+            };
+            const resolvedPayee = stmtPaymentProcessorAliases[payeeName.toUpperCase()] || payeeName;
+            const supplierMatch = cashflowLines.find(
+              l => l.supplierName && resolvedPayee && resolvedPayee.toLowerCase().includes(l.supplierName.toLowerCase())
+            );
+            if (supplierMatch) {
+              matchedLineId = supplierMatch.id;
+              confidence = "high";
+              method = "supplier_match";
+            } else {
+              const nameMatch = cashflowLines.find(
+                l => {
+                  const words = l.name.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
+                  return words.some((w: string) =>
+                    resolvedPayee.toLowerCase().includes(w) ||
+                    payeeName.toLowerCase().includes(w) ||
+                    description.toLowerCase().includes(w)
+                  );
+                }
+              );
+              if (nameMatch) {
+                matchedLineId = nameMatch.id;
+                confidence = "medium";
+                method = "keyword_match";
+              }
+            }
+          }
+
+          await storage.createActualTransaction({
+            xeroTransactionId: slId,
+            xeroSourceType: isCredit ? "STATEMENT_RECEIVE" : "STATEMENT_SPEND",
+            transactionDate: txDate,
+            amount: String(amount),
+            description,
+            supplierOrCounterparty: payeeName,
+            bankAccountId: ba.id,
+            cashflowLineId: matchedLineId,
+            mappedConfidence: confidence,
+            mappingMethod: method,
+            reconciledFlag: false,
+          });
+
+          existingXeroIds.add(slId);
+          imported++;
+          if (matchedLineId) mapped++;
+        }
+      }
+    } catch (err: any) {
+      const msg = `Statement lines import for ${ba.name}: ${err.message}`;
+      console.log(msg);
+      errors.push(msg);
+    }
   }
 
   try {
