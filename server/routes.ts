@@ -1542,6 +1542,55 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/fix-production-v11", async (_req, res) => {
+    try {
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v11-applied' LIMIT 1`);
+      if (marker.rows?.length) {
+        return res.json({ success: false, message: "Fix v11 already applied" });
+      }
+
+      const results: string[] = [];
+
+      const arthurExists = await db.execute(sql`
+        SELECT id FROM actual_transactions WHERE xero_transaction_id = '489156d1-6f2d-4fb4-bb05-df21c5902dfd'
+      `);
+      if (!arthurExists.rows?.length) {
+        const arthurLine = await db.execute(sql`
+          SELECT id FROM cashflow_lines WHERE supplier_name = 'ARTHUR' AND active = true LIMIT 1
+        `);
+        const arthurLineId = arthurLine.rows?.[0]?.id || null;
+
+        await db.execute(sql`
+          INSERT INTO actual_transactions (xero_transaction_id, xero_source_type, transaction_date, amount, description, supplier_or_counterparty, bank_account_id, cashflow_line_id, mapped_confidence, mapping_method, reconciled_flag)
+          VALUES ('489156d1-6f2d-4fb4-bb05-df21c5902dfd', 'ACCPAYPAYMENT', '2026-03-10', '-45.58', 'INV-154675', 'ARTHUR', 3, ${arthurLineId}, 'high', 'supplier_match', true)
+        `);
+        results.push("Inserted ARTHUR payment -45.58 for 2026-03-10");
+      } else {
+        results.push("ARTHUR payment already exists");
+      }
+
+      const tdsExists = await db.execute(sql`
+        SELECT id FROM actual_transactions WHERE xero_transaction_id = 'c344fec2-5240-4944-a22a-1cc5ec0b750d'
+      `);
+      if (!tdsExists.rows?.length) {
+        await db.execute(sql`
+          INSERT INTO actual_transactions (xero_transaction_id, xero_source_type, transaction_date, amount, description, supplier_or_counterparty, bank_account_id, cashflow_line_id, mapped_confidence, mapping_method, reconciled_flag)
+          VALUES ('c344fec2-5240-4944-a22a-1cc5ec0b750d', 'ACCPAYPAYMENT', '2026-03-10', '-17.95', 'HD 887388387', 'THE DISPUTE SERVICE (TDS)', 4, null, 'unmatched', 'none', true)
+        `);
+        results.push("Inserted TDS payment -17.95 for 2026-03-10");
+      } else {
+        results.push("TDS payment already exists");
+      }
+
+      const dlaId = 1;
+      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-02', '0', 'fix-production-v11-applied')`);
+
+      res.json({ success: true, actions: results });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/data-export", async (_req, res) => {
     try {
       const accounts = await storage.getBankAccounts();
