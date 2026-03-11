@@ -49,6 +49,7 @@ const SCOPES = [
   "accounting.settings.read",
   "accounting.contacts.read",
   "accounting.reports.banksummary.read",
+  "finance.bankstatementsplus.read",
   "offline_access",
 ];
 
@@ -500,12 +501,16 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
     try {
       const fromDate = startDate.toISOString().split("T")[0];
       const toDate = new Date().toISOString().split("T")[0];
+      console.log(`Fetching bank statement lines for ${ba.name} from ${fromDate} to ${toDate}`);
       const statementsData = await xeroFinanceApiGet(
         `BankStatements?bankAccountId=${ba.xeroAccountId}&fromDate=${fromDate}&toDate=${toDate}`
       );
       const statements = statementsData?.statements || [];
+      console.log(`Got ${statements.length} statements for ${ba.name}`);
+      let stmtImported = 0;
       for (const stmt of statements) {
         const stmtLines = stmt?.statementLines || [];
+        console.log(`Statement has ${stmtLines.length} lines`);
         for (const sl of stmtLines) {
           const slId = sl.statementLineId;
           if (!slId) continue;
@@ -596,9 +601,11 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
 
           existingXeroIds.add(slId);
           imported++;
+          stmtImported++;
           if (matchedLineId) mapped++;
         }
       }
+      console.log(`Imported ${stmtImported} new statement lines for ${ba.name}`);
     } catch (err: any) {
       const msg = `Statement lines import for ${ba.name}: ${err.message}`;
       console.log(msg);
