@@ -71,7 +71,8 @@ app.use((req, res, next) => {
     if (
       req.path.startsWith("/auth/") ||
       req.path === "/xero/callback" ||
-      req.path === "/fix-production"
+      req.path === "/fix-production" ||
+      req.path === "/debug-xero-march10"
     ) {
       return next();
     }
