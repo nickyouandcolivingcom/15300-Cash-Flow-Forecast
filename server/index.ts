@@ -73,6 +73,7 @@ app.use((req, res, next) => {
       req.path === "/xero/callback" ||
       req.path === "/fix-production" ||
       req.path === "/fix-production-v11" ||
+      req.path === "/refresh-balances" ||
       req.path === "/debug-xero-march10"
     ) {
       return next();

@@ -751,11 +751,20 @@ export async function registerRoutes(
       const monthsBack = req.body.monthsBack || 3;
       const txResult = await importBankTransactions(monthsBack);
       await generateForecasts();
+
+      let balances;
+      try {
+        balances = await fetchBankBalances();
+      } catch (e: any) {
+        console.error("Balance fetch failed during full-sync:", e.message);
+      }
+
       res.json({
         success: true,
         accounts: accountsResult,
         transactions: txResult,
-        message: "Full sync complete - accounts imported, transactions synced, forecasts regenerated",
+        balances,
+        message: "Full sync complete - accounts imported, transactions synced, forecasts regenerated, balances updated",
       });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -1262,6 +1271,15 @@ export async function registerRoutes(
       months,
       categoryBridge,
     });
+  });
+
+  app.post("/api/refresh-balances", async (_req, res) => {
+    try {
+      const balances = await fetchBankBalances();
+      res.json({ success: true, ...balances });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
   });
 
   app.get("/api/debug-xero-march10", async (_req, res) => {
