@@ -1,124 +1,153 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Form, FormControl, FormField, FormItem, FormLabel } from "@/components/ui/form";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatCurrencyDetailed } from "@/lib/format";
-import { Plus, Search, CheckCircle, XCircle } from "lucide-react";
+import { Plus, Search, CheckCircle, XCircle, Check } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { ActualTransaction, BankAccount, CashflowLine } from "@shared/schema";
 
-function InlineMappingSelect({
+const CATEGORY_ORDER = ["Rent Revenue", "Recurring", "Tenancies", "Tradesmen", "Transfers", "Other"];
+
+function MappingPicker({
   transactionId,
   currentLineId,
   cashflowLines,
-  onMapped,
 }: {
   transactionId: number;
   currentLineId: number | null;
   cashflowLines: CashflowLine[];
-  onMapped: () => void;
 }) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   const mapMutation = useMutation({
-    mutationFn: async (lineId: string) => {
-      await apiRequest("PATCH", `/api/transactions/${transactionId}`, {
-        cashflowLineId: lineId === "unmap" ? null : parseInt(lineId),
-        mappedConfidence: lineId === "unmap" ? "unmatched" : "manual",
-        mappingMethod: lineId === "unmap" ? "none" : "manual",
+    mutationFn: async (lineId: number | null) => {
+      const response = await apiRequest("PATCH", `/api/transactions/${transactionId}`, {
+        cashflowLineId: lineId,
+        mappedConfidence: lineId ? "manual" : "unmatched",
+        mappingMethod: lineId ? "manual" : "none",
       });
+      return response;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
-      toast({ title: "Transaction mapped" });
-      onMapped();
+      setOpen(false);
+      toast({ title: "Mapping saved" });
     },
-    onError: () => {
-      toast({ title: "Error", description: "Failed to map transaction", variant: "destructive" });
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message || "Failed to save mapping", variant: "destructive" });
     },
   });
 
-  const grouped = cashflowLines.reduce((acc, l) => {
-    if (!acc[l.category]) acc[l.category] = [];
-    acc[l.category].push(l);
-    return acc;
-  }, {} as Record<string, CashflowLine[]>);
+  const currentLine = cashflowLines.find(l => l.id === currentLineId);
 
-  if (!open && currentLineId) {
-    const lineName = cashflowLines.find(l => l.id === currentLineId)?.name;
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="text-left"
-        data-testid={`button-remap-${transactionId}`}
-        title="Click to reassign"
-      >
-        <Badge variant="secondary" className="text-xs cursor-pointer hover:bg-secondary/70">{lineName}</Badge>
-      </button>
-    );
-  }
+  const categories = CATEGORY_ORDER.filter(cat =>
+    cashflowLines.some(l => l.category === cat)
+  );
 
-  if (!open && !currentLineId) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        data-testid={`button-map-${transactionId}`}
-        className="text-left"
-      >
-        <Badge variant="outline" className="text-xs text-amber-600 cursor-pointer hover:border-amber-400">
-          Unmapped — click to map
-        </Badge>
-      </button>
-    );
-  }
+  const filteredLines = selectedCategory
+    ? cashflowLines.filter(l => l.category === selectedCategory)
+    : cashflowLines;
 
   return (
-    <Select
-      open
-      onOpenChange={(o) => { if (!o) setOpen(false); }}
-      onValueChange={(val) => {
-        setOpen(false);
-        mapMutation.mutate(val);
-      }}
-      value={currentLineId ? String(currentLineId) : undefined}
-    >
-      <SelectTrigger
-        className="h-7 text-xs w-48"
-        data-testid={`select-map-line-${transactionId}`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <SelectValue placeholder="Select line..." />
-      </SelectTrigger>
-      <SelectContent className="max-h-72">
-        {currentLineId && (
-          <SelectItem value="unmap" className="text-xs text-muted-foreground">
-            — Remove mapping
-          </SelectItem>
-        )}
-        {Object.entries(grouped).sort().map(([cat, lines]) => (
-          <div key={cat}>
-            <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted/50 sticky top-0">
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          data-testid={`button-map-${transactionId}`}
+          className="text-left focus:outline-none"
+          disabled={mapMutation.isPending}
+        >
+          {currentLine ? (
+            <Badge variant="secondary" className="text-xs cursor-pointer hover:bg-secondary/70 whitespace-nowrap">
+              {currentLine.name}
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-xs cursor-pointer hover:border-amber-400 text-amber-600 whitespace-nowrap">
+              Unmapped — click to map
+            </Badge>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 p-0" align="start" side="bottom">
+        <div className="p-2 border-b flex gap-1 flex-wrap">
+          <button
+            onClick={() => setSelectedCategory(null)}
+            className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+              selectedCategory === null
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted hover:bg-muted/80 text-muted-foreground"
+            }`}
+          >
+            All
+          </button>
+          {categories.map(cat => (
+            <button
+              key={cat}
+              onClick={() => setSelectedCategory(cat === selectedCategory ? null : cat)}
+              className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+                selectedCategory === cat
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted hover:bg-muted/80 text-muted-foreground"
+              }`}
+            >
               {cat}
-            </div>
-            {lines.sort((a, b) => a.name.localeCompare(b.name)).map(l => (
-              <SelectItem key={l.id} value={String(l.id)} className="text-xs">
-                <span className="text-muted-foreground mr-1">{l.code}</span> {l.name}
-              </SelectItem>
-            ))}
-          </div>
-        ))}
-      </SelectContent>
-    </Select>
+            </button>
+          ))}
+        </div>
+        <Command>
+          <CommandInput placeholder="Type to search..." className="h-9" />
+          <CommandList className="max-h-56">
+            <CommandEmpty>No lines found.</CommandEmpty>
+            {currentLineId && (
+              <CommandGroup>
+                <CommandItem
+                  value="remove-mapping"
+                  onSelect={() => mapMutation.mutate(null)}
+                  className="text-muted-foreground text-xs italic"
+                >
+                  — Remove mapping
+                </CommandItem>
+              </CommandGroup>
+            )}
+            {(selectedCategory ? [selectedCategory] : CATEGORY_ORDER).map(cat => {
+              const lines = filteredLines.filter(l => l.category === cat);
+              if (!lines.length) return null;
+              return (
+                <CommandGroup key={cat} heading={cat}>
+                  {lines.sort((a, b) => a.name.localeCompare(b.name)).map(l => (
+                    <CommandItem
+                      key={l.id}
+                      value={`${l.code} ${l.name} ${l.category}`}
+                      onSelect={() => mapMutation.mutate(l.id)}
+                      className="text-xs"
+                    >
+                      <Check
+                        className={`mr-1.5 h-3 w-3 shrink-0 ${l.id === currentLineId ? "opacity-100" : "opacity-0"}`}
+                      />
+                      <span className="text-muted-foreground mr-1">{l.code}</span>
+                      {l.name}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              );
+            })}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -172,7 +201,6 @@ export default function Transactions() {
   });
 
   const unmappedCount = (transactions || []).filter(t => !t.cashflowLineId).length;
-
   const getBankName = (id: number) => bankAccounts?.find(a => a.id === id)?.name || "Unknown";
 
   if (isLoading) {
@@ -205,32 +233,27 @@ export default function Transactions() {
             <Form {...form}>
               <form onSubmit={form.handleSubmit((data) => createMutation.mutate(data))} className="space-y-4">
                 <FormField control={form.control} name="transactionDate" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Date</FormLabel>
+                  <FormItem><FormLabel>Date</FormLabel>
                     <FormControl><Input type="date" {...field} data-testid="input-transaction-date" /></FormControl>
                   </FormItem>
                 )} />
                 <FormField control={form.control} name="amount" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Amount</FormLabel>
+                  <FormItem><FormLabel>Amount</FormLabel>
                     <FormControl><Input type="number" step="0.01" placeholder="0.00" {...field} data-testid="input-transaction-amount" /></FormControl>
                   </FormItem>
                 )} />
                 <FormField control={form.control} name="description" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Description</FormLabel>
+                  <FormItem><FormLabel>Description</FormLabel>
                     <FormControl><Input placeholder="Transaction description" {...field} data-testid="input-transaction-description" /></FormControl>
                   </FormItem>
                 )} />
                 <FormField control={form.control} name="supplierOrCounterparty" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Supplier / Counterparty</FormLabel>
+                  <FormItem><FormLabel>Supplier / Counterparty</FormLabel>
                     <FormControl><Input placeholder="Supplier name" {...field} data-testid="input-transaction-supplier" /></FormControl>
                   </FormItem>
                 )} />
                 <FormField control={form.control} name="bankAccountId" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Bank Account</FormLabel>
+                  <FormItem><FormLabel>Bank Account</FormLabel>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl><SelectTrigger data-testid="select-bank-account"><SelectValue placeholder="Select account" /></SelectTrigger></FormControl>
                       <SelectContent>
@@ -240,8 +263,7 @@ export default function Transactions() {
                   </FormItem>
                 )} />
                 <FormField control={form.control} name="cashflowLineId" render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Cash Flow Line (optional)</FormLabel>
+                  <FormItem><FormLabel>Cash Flow Line (optional)</FormLabel>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl><SelectTrigger data-testid="select-cashflow-line"><SelectValue placeholder="Map to line" /></SelectTrigger></FormControl>
                       <SelectContent>
@@ -260,7 +282,7 @@ export default function Transactions() {
       </div>
 
       <Card>
-        <CardHeader className="pb-3">
+        <div className="p-4 border-b">
           <div className="flex items-center gap-2 flex-wrap">
             <Search className="h-4 w-4 text-muted-foreground" />
             <Input
@@ -285,7 +307,7 @@ export default function Transactions() {
             </Button>
             <Badge variant="secondary">{filtered.length} transactions</Badge>
           </div>
-        </CardHeader>
+        </div>
         <CardContent className="p-0">
           <Table>
             <TableHeader>
@@ -310,18 +332,17 @@ export default function Transactions() {
                 filtered.map(t => (
                   <TableRow key={t.id} data-testid={`row-transaction-${t.id}`}>
                     <TableCell className="text-sm whitespace-nowrap">{t.transactionDate as string}</TableCell>
-                    <TableCell className="text-sm max-w-[200px] truncate">{t.description}</TableCell>
-                    <TableCell className="text-sm">{t.supplierOrCounterparty}</TableCell>
-                    <TableCell className="text-sm">{getBankName(t.bankAccountId)}</TableCell>
+                    <TableCell className="text-sm max-w-[180px] truncate">{t.description}</TableCell>
+                    <TableCell className="text-sm max-w-[140px] truncate">{t.supplierOrCounterparty}</TableCell>
+                    <TableCell className="text-sm whitespace-nowrap">{getBankName(t.bankAccountId)}</TableCell>
                     <TableCell className="text-sm">
-                      <InlineMappingSelect
+                      <MappingPicker
                         transactionId={t.id}
                         currentLineId={t.cashflowLineId}
                         cashflowLines={activeLines}
-                        onMapped={() => {}}
                       />
                     </TableCell>
-                    <TableCell className={`text-right text-sm font-medium tabular-nums ${parseFloat(t.amount as string) < 0 ? "text-red-600" : ""}`}>
+                    <TableCell className={`text-right text-sm font-medium tabular-nums whitespace-nowrap ${parseFloat(t.amount as string) < 0 ? "text-red-600" : ""}`}>
                       {formatCurrencyDetailed(t.amount)}
                     </TableCell>
                     <TableCell className="text-center">
