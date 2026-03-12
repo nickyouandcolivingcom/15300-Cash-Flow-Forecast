@@ -16,11 +16,118 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { ActualTransaction, BankAccount, CashflowLine } from "@shared/schema";
 
+function InlineMappingSelect({
+  transactionId,
+  currentLineId,
+  cashflowLines,
+  onMapped,
+}: {
+  transactionId: number;
+  currentLineId: number | null;
+  cashflowLines: CashflowLine[];
+  onMapped: () => void;
+}) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+
+  const mapMutation = useMutation({
+    mutationFn: async (lineId: string) => {
+      await apiRequest("PATCH", `/api/transactions/${transactionId}`, {
+        cashflowLineId: lineId === "unmap" ? null : parseInt(lineId),
+        mappedConfidence: lineId === "unmap" ? "unmatched" : "manual",
+        mappingMethod: lineId === "unmap" ? "none" : "manual",
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/transactions"] });
+      toast({ title: "Transaction mapped" });
+      onMapped();
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to map transaction", variant: "destructive" });
+    },
+  });
+
+  const grouped = cashflowLines.reduce((acc, l) => {
+    if (!acc[l.category]) acc[l.category] = [];
+    acc[l.category].push(l);
+    return acc;
+  }, {} as Record<string, CashflowLine[]>);
+
+  if (!open && currentLineId) {
+    const lineName = cashflowLines.find(l => l.id === currentLineId)?.name;
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="text-left"
+        data-testid={`button-remap-${transactionId}`}
+        title="Click to reassign"
+      >
+        <Badge variant="secondary" className="text-xs cursor-pointer hover:bg-secondary/70">{lineName}</Badge>
+      </button>
+    );
+  }
+
+  if (!open && !currentLineId) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        data-testid={`button-map-${transactionId}`}
+        className="text-left"
+      >
+        <Badge variant="outline" className="text-xs text-amber-600 cursor-pointer hover:border-amber-400">
+          Unmapped — click to map
+        </Badge>
+      </button>
+    );
+  }
+
+  return (
+    <Select
+      open
+      onOpenChange={(o) => { if (!o) setOpen(false); }}
+      onValueChange={(val) => {
+        setOpen(false);
+        mapMutation.mutate(val);
+      }}
+      value={currentLineId ? String(currentLineId) : undefined}
+    >
+      <SelectTrigger
+        className="h-7 text-xs w-48"
+        data-testid={`select-map-line-${transactionId}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <SelectValue placeholder="Select line..." />
+      </SelectTrigger>
+      <SelectContent className="max-h-72">
+        {currentLineId && (
+          <SelectItem value="unmap" className="text-xs text-muted-foreground">
+            — Remove mapping
+          </SelectItem>
+        )}
+        {Object.entries(grouped).sort().map(([cat, lines]) => (
+          <div key={cat}>
+            <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted/50 sticky top-0">
+              {cat}
+            </div>
+            {lines.sort((a, b) => a.name.localeCompare(b.name)).map(l => (
+              <SelectItem key={l.id} value={String(l.id)} className="text-xs">
+                <span className="text-muted-foreground mr-1">{l.code}</span> {l.name}
+              </SelectItem>
+            ))}
+          </div>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 export default function Transactions() {
   const { data: transactions, isLoading } = useQuery<ActualTransaction[]>({ queryKey: ["/api/transactions"] });
   const { data: bankAccounts } = useQuery<BankAccount[]>({ queryKey: ["/api/bank-accounts"] });
   const { data: cashflowLines } = useQuery<CashflowLine[]>({ queryKey: ["/api/cashflow-lines"] });
   const [searchTerm, setSearchTerm] = useState("");
+  const [showUnmappedOnly, setShowUnmappedOnly] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const { toast } = useToast();
 
@@ -54,17 +161,19 @@ export default function Transactions() {
     },
   });
 
-  const filtered = (transactions || []).filter(t =>
-    !searchTerm ||
-    t.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    t.supplierOrCounterparty?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const activeLines = (cashflowLines || []).filter(l => l.active);
+
+  const filtered = (transactions || []).filter(t => {
+    const matchesSearch = !searchTerm ||
+      t.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      t.supplierOrCounterparty?.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesFilter = !showUnmappedOnly || !t.cashflowLineId;
+    return matchesSearch && matchesFilter;
+  });
+
+  const unmappedCount = (transactions || []).filter(t => !t.cashflowLineId).length;
 
   const getBankName = (id: number) => bankAccounts?.find(a => a.id === id)?.name || "Unknown";
-  const getLineName = (id: number | null) => {
-    if (!id) return null;
-    return cashflowLines?.find(l => l.id === id)?.name || null;
-  };
 
   if (isLoading) {
     return (
@@ -136,7 +245,7 @@ export default function Transactions() {
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl><SelectTrigger data-testid="select-cashflow-line"><SelectValue placeholder="Map to line" /></SelectTrigger></FormControl>
                       <SelectContent>
-                        {cashflowLines?.filter(l => l.active).map(l => <SelectItem key={l.id} value={String(l.id)}>{l.code} - {l.name}</SelectItem>)}
+                        {activeLines.map(l => <SelectItem key={l.id} value={String(l.id)}>{l.code} - {l.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
                   </FormItem>
@@ -152,7 +261,7 @@ export default function Transactions() {
 
       <Card>
         <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Search className="h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Search transactions..."
@@ -161,6 +270,19 @@ export default function Transactions() {
               className="max-w-sm"
               data-testid="input-search-transactions"
             />
+            <Button
+              variant={showUnmappedOnly ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowUnmappedOnly(v => !v)}
+              data-testid="button-filter-unmapped"
+            >
+              Unmapped only
+              {unmappedCount > 0 && (
+                <Badge variant={showUnmappedOnly ? "secondary" : "destructive"} className="ml-1.5 text-xs">
+                  {unmappedCount}
+                </Badge>
+              )}
+            </Button>
             <Badge variant="secondary">{filtered.length} transactions</Badge>
           </div>
         </CardHeader>
@@ -187,16 +309,17 @@ export default function Transactions() {
               ) : (
                 filtered.map(t => (
                   <TableRow key={t.id} data-testid={`row-transaction-${t.id}`}>
-                    <TableCell className="text-sm whitespace-nowrap">{t.transactionDate}</TableCell>
+                    <TableCell className="text-sm whitespace-nowrap">{t.transactionDate as string}</TableCell>
                     <TableCell className="text-sm max-w-[200px] truncate">{t.description}</TableCell>
                     <TableCell className="text-sm">{t.supplierOrCounterparty}</TableCell>
                     <TableCell className="text-sm">{getBankName(t.bankAccountId)}</TableCell>
                     <TableCell className="text-sm">
-                      {getLineName(t.cashflowLineId) ? (
-                        <Badge variant="secondary" className="text-xs">{getLineName(t.cashflowLineId)}</Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-xs text-amber-600">Unmapped</Badge>
-                      )}
+                      <InlineMappingSelect
+                        transactionId={t.id}
+                        currentLineId={t.cashflowLineId}
+                        cashflowLines={activeLines}
+                        onMapped={() => {}}
+                      />
                     </TableCell>
                     <TableCell className={`text-right text-sm font-medium tabular-nums ${parseFloat(t.amount as string) < 0 ? "text-red-600" : ""}`}>
                       {formatCurrencyDetailed(t.amount)}
