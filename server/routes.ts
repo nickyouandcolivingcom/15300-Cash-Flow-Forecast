@@ -1273,6 +1273,31 @@ export async function registerRoutes(
     });
   });
 
+  app.post("/api/fix-production-v12", async (_req, res) => {
+    try {
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v12-applied' LIMIT 1`);
+      if (marker.rows?.length) {
+        return res.json({ success: false, message: "Fix v12 already applied" });
+      }
+
+      const count = await db.execute(sql`
+        SELECT COUNT(*) as n FROM actual_transactions WHERE xero_source_type = 'ACCRECPAYMENT'
+      `);
+      const n = count.rows?.[0]?.n || 0;
+
+      await db.execute(sql`
+        DELETE FROM actual_transactions WHERE xero_source_type = 'ACCRECPAYMENT'
+      `);
+
+      const dlaId = 1;
+      await db.execute(sql`INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason) VALUES (${dlaId}, '2099-03', '0', 'fix-production-v12-applied')`);
+
+      res.json({ success: true, deleted: n, message: `Removed ${n} duplicate ACCRECPAYMENT entries (rent income already captured via invoices)` });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/refresh-balances", async (_req, res) => {
     try {
       const balances = await fetchBankBalances();

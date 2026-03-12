@@ -514,6 +514,9 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
 
         for (const pmt of payments) {
           if (pmt.Status === "DELETED" || pmt.Status === "VOIDED") continue;
+          // Only import bill payments (outflows). ACCRECPAYMENT = rent income,
+          // already imported via invoice import — importing again creates duplicates.
+          if (pmt.PaymentType !== "ACCPAYPAYMENT") continue;
           const pmtId = pmt.PaymentID;
           if (!pmtId) continue;
           if (existingXeroIds.has(pmtId)) continue;
