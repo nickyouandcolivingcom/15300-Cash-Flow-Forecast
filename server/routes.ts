@@ -1222,27 +1222,45 @@ export async function registerRoutes(
     for (const cat of bridgeCategories) categoryBridge[cat] = 0;
 
     const currentMonthStart = currentMonth + "-01";
+
+    // Rent Revenue: always use forecast (prepayments distort actuals)
+    for (const line of lines.filter(l => l.active && !l.isRollup && l.category === "Rent Revenue")) {
+      const fc = currentMonthForecasts.find(f => f.cashflowLineId === line.id);
+      if (!fc) continue;
+      const amt = parseFloat(fc.currentForecastAmount as string) || 0;
+      categoryBridge["Rent Revenue"] += amt;
+    }
+
+    // All other categories: use actuals
     const actualTxRows = await db.execute(sql`
       SELECT COALESCE(SUM(at.amount), 0)::text as total, cl.category
       FROM actual_transactions at
       LEFT JOIN cashflow_lines cl ON cl.id = at.cashflow_line_id
       WHERE at.transaction_date >= ${currentMonthStart}::date
         AND at.transaction_date <= ${lastActualDate}::date
+        AND cl.category != 'Rent Revenue'
       GROUP BY cl.category
     `);
 
-    console.log("BRIDGE DEBUG", JSON.stringify(actualTxRows.rows));
-    let bridgeTotal = 0;
     for (const row of actualTxRows.rows) {
       const cat = (row.category as string) || "Other";
       const normalizedCat = bridgeCategories.includes(cat) ? cat : "Other";
       const amt = parseFloat(row.total as string) || 0;
       categoryBridge[normalizedCat] = (categoryBridge[normalizedCat] || 0) + amt;
-      bridgeTotal += amt;
     }
 
-    const monthEndCash = openingBalanceTotal + bridgeTotal;
+    // Tradesmen: if no actuals, fall back to forecast
+    if (categoryBridge["Tradesmen"] === 0) {
+      for (const line of lines.filter(l => l.active && !l.isRollup && l.category === "Tradesmen")) {
+        const fc = currentMonthForecasts.find(f => f.cashflowLineId === line.id);
+        if (!fc) continue;
+        const amt = parseFloat(fc.currentForecastAmount as string) || 0;
+        categoryBridge["Tradesmen"] += amt;
+      }
+    }
 
+    const bridgeTotal = Object.values(categoryBridge).reduce((a, b) => a + b, 0);
+    const monthEndCash = openingBalanceTotal + bridgeTotal;
     res.json({
       currentCashPosition,
       lastActualDate,
