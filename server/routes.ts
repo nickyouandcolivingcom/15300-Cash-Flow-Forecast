@@ -1767,7 +1767,7 @@ export async function registerRoutes(
         res.status(500).json({ message: err.message });
       }
     });
-  app.post("/api/cleanup-duplicates", async (req, res) => {
+  app.get("/api/cleanup-duplicates", async (req, res) => {
     if (req.query.token !== "cleanup123") {
       return res.status(401).json({ message: "Unauthorized" });
     }
