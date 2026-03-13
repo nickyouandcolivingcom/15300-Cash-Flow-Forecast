@@ -246,62 +246,54 @@ export async function fetchBankBalances(): Promise<{ totalBalance: number; accou
   const result: { name: string; balance: number }[] = [];
   let totalBalance = 0;
 
-  const today = new Date().toISOString().split("T")[0];
+  const XERO_NAME_MAP: Record<string, string> = {
+    "SANTANDER BUSINESS ACCOUNT": "Santander",
+    "STARLING BUSINESS ACCOUNT": "Starling",
+  };
+
   let reportData: any;
   try {
     reportData = await xeroApiGet(`Reports/BankSummary`);
-    console.log("Bank Summary report response:", JSON.stringify(reportData).substring(0, 2000));
+    console.log("Bank Summary response:", JSON.stringify(reportData).substring(0, 1000));
   } catch (e: any) {
-    console.error("Bank Summary report failed, trying account-level approach:", e.message);
-    for (const account of activeAccounts) {
-      try {
-        const data = await xeroApiGet(`Accounts/${account.xeroAccountId}`);
-        const xeroAccount = data.Accounts?.[0];
-        console.log(`Account ${account.name} raw:`, JSON.stringify(xeroAccount).substring(0, 500));
-      } catch (e2: any) {
-        console.error(`Account fetch failed for ${account.name}: ${e2.message}`);
-      }
-    }
+    console.error("Bank Summary failed:", e.message);
     throw e;
   }
 
   const report = reportData.Reports?.[0];
-  if (report?.Rows) {
-    for (const section of report.Rows) {
-      if (section.RowType === "Section" && section.Rows) {
-        for (const row of section.Rows) {
-          if (row.RowType === "Row" && row.Cells) {
-            const accountName = row.Cells[0]?.Value || "";
-            const closingBalance = parseFloat(row.Cells[4]?.Value || row.Cells[3]?.Value || "0");
-            console.log(`Bank Summary row: "${accountName}" closing=${closingBalance} (cells: ${row.Cells.map((c: any) => c.Value).join(", ")})`);
+  if (!report?.Rows) {
+    console.log("Bank Summary returned no rows");
+    return { totalBalance: 0, accounts: [] };
+  }
 
-            const match = activeAccounts.find(a => a.xeroAccountId && accountName.toLowerCase().includes(a.name.split(" ")[0].toLowerCase()));
-            if (!match) {
-              const matchByXeroName = activeAccounts.find(a => {
-                const dbWords = a.name.toLowerCase().split(/\s+/);
-                const xeroWords = accountName.toLowerCase().split(/\s+/);
-                return dbWords.some(w => w.length > 3 && xeroWords.some(xw => xw.includes(w)));
-              });
-              if (matchByXeroName) {
-                result.push({ name: matchByXeroName.name, balance: closingBalance });
-                totalBalance += closingBalance;
-                await storage.updateBankAccount(matchByXeroName.id, { currentBalance: closingBalance.toFixed(2) });
-                console.log(`Matched "${accountName}" to ${matchByXeroName.name}: £${closingBalance.toFixed(2)}`);
-              } else {
-                console.log(`No match for Bank Summary row: "${accountName}"`);
-              }
-            } else {
-              result.push({ name: match.name, balance: closingBalance });
-              totalBalance += closingBalance;
-              await storage.updateBankAccount(match.id, { currentBalance: closingBalance.toFixed(2) });
-              console.log(`Matched "${accountName}" to ${match.name}: £${closingBalance.toFixed(2)}`);
-            }
-          }
-        }
+  for (const section of report.Rows) {
+    if (section.RowType !== "Section" || !section.Rows) continue;
+    for (const row of section.Rows) {
+      if (row.RowType !== "Row" || !row.Cells) continue;
+
+      const xeroAccountName = (row.Cells[0]?.Value || "").trim().toUpperCase();
+      const closingBalance = parseFloat(row.Cells[4]?.Value || row.Cells[3]?.Value || "0");
+
+      console.log(`Bank Summary row: "${xeroAccountName}" closing=£${closingBalance}`);
+
+      const dbName = XERO_NAME_MAP[xeroAccountName];
+      const match = dbName
+        ? activeAccounts.find(a => a.name.toLowerCase() === dbName.toLowerCase())
+        : activeAccounts.find(a => xeroAccountName.includes(a.name.toUpperCase()));
+
+      if (match) {
+        result.push({ name: match.name, balance: closingBalance });
+        totalBalance += closingBalance;
+        await storage.updateBankAccount(match.id, { currentBalance: closingBalance.toFixed(2) });
+        console.log(`✓ Matched "${xeroAccountName}" → ${match.name}: £${closingBalance.toFixed(2)}`);
+      } else {
+        console.log(`✗ No DB match for Xero account: "${xeroAccountName}"`);
       }
     }
-  } else {
-    console.log("Bank Summary report returned no rows");
+  }
+
+  if (result.length === 0) {
+    console.log("WARNING: No balances matched. Active DB accounts:", activeAccounts.map(a => `"${a.name}" (xeroId: ${a.xeroAccountId})`).join(", "));
   }
 
   return { totalBalance, accounts: result };
@@ -352,8 +344,13 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
   const bankAccounts = await storage.getBankAccounts();
   const activeBankAccounts = bankAccounts.filter(ba => ba.active && ba.xeroAccountId);
   const cashflowLines = await storage.getCashflowLines();
+
   const existingTransactions = await storage.getActualTransactions({});
-  const existingXeroIds = new Set(existingTransactions.map(t => t.xeroTransactionId).filter(Boolean));
+  const existingXeroIds = new Set(
+    existingTransactions
+      .map(t => t.xeroTransactionId)
+      .filter(Boolean)
+  );
 
   const startDate = new Date();
   startDate.setMonth(startDate.getMonth() - monthsBack);
@@ -361,6 +358,60 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
 
   let imported = 0;
   let mapped = 0;
+
+  const paymentProcessorAliases: Record<string, string> = {
+    "GOCARDLESS": "ARTHUR",
+  };
+
+  function parseTxDate(raw: string): string {
+    if (raw.startsWith("/Date(")) {
+      const ms = parseInt(raw.match(/\d+/)?.[0] || "0");
+      return new Date(ms).toISOString().split("T")[0];
+    }
+    if (raw.includes("T")) return raw.split("T")[0];
+    return raw;
+  }
+
+  function matchCashflowLine(
+    contactName: string,
+    description: string,
+    cashflowLines: any[]
+  ): { lineId: number | null; confidence: string; method: string } {
+    const resolvedName = paymentProcessorAliases[contactName.toUpperCase()] || contactName;
+
+    const isBankTransfer =
+      description.toLowerCase().includes("bank transfer") ||
+      /transfer (to|from)/i.test(description);
+    if (isBankTransfer) {
+      const interbankLine = cashflowLines.find(l => l.code === "TR-IB");
+      if (interbankLine) return { lineId: interbankLine.id, confidence: "high", method: "bank_transfer_match" };
+    }
+
+    const isFxCharge =
+      (description === "OTT DEBIT" || description === "FEES AND CHARGES" || description === "MONTHLY CORPORATE ACCOUNT CHARGE") &&
+      contactName === "SANTANDER BUSINESS";
+    if (isFxCharge) {
+      const santFeeLine = cashflowLines.find(l => l.code === "SANT-FEE");
+      if (santFeeLine) return { lineId: santFeeLine.id, confidence: "medium", method: "fx_fee_match" };
+    }
+
+    const supplierMatch = cashflowLines.find(
+      l => l.supplierName && resolvedName && resolvedName.toLowerCase().includes(l.supplierName.toLowerCase())
+    );
+    if (supplierMatch) return { lineId: supplierMatch.id, confidence: "high", method: "supplier_match" };
+
+    const nameMatch = cashflowLines.find(l => {
+      const words = l.name.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
+      return words.some((w: string) =>
+        resolvedName.toLowerCase().includes(w) ||
+        contactName.toLowerCase().includes(w) ||
+        description.toLowerCase().includes(w)
+      );
+    });
+    if (nameMatch) return { lineId: nameMatch.id, confidence: "medium", method: "keyword_match" };
+
+    return { lineId: null, confidence: "unmatched", method: "none" };
+  }
 
   for (const ba of activeBankAccounts) {
     let page = 1;
@@ -373,7 +424,7 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
         );
 
         const transactions = data.BankTransactions || [];
-        console.log(`Fetched ${transactions.length} transactions for ${ba.name} (page ${page})`);
+        console.log(`[${ba.name}] page ${page}: ${transactions.length} transactions`);
 
         if (transactions.length === 0) {
           hasMore = false;
@@ -382,110 +433,40 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
 
         for (const tx of transactions) {
           if (tx.Status === "DELETED" || tx.Status === "VOIDED") continue;
-          if (existingXeroIds.has(tx.BankTransactionID)) continue;
+
+          const txId = tx.BankTransactionID;
+          if (existingXeroIds.has(txId)) continue;
 
           const contactName = tx.Contact?.Name || "";
           const description = tx.Reference || tx.LineItems?.[0]?.Description || contactName;
           const isInflow = tx.Type === "RECEIVE" || tx.Type === "RECEIVE-TRANSFER";
           const amount = isInflow ? Math.abs(tx.Total) : -Math.abs(tx.Total);
+          const txDate = parseTxDate(String(tx.Date));
 
-          let txDate: string;
-          if (typeof tx.Date === "string" && tx.Date.startsWith("/Date(")) {
-            const ms = parseInt(tx.Date.match(/\d+/)?.[0] || "0");
-            txDate = new Date(ms).toISOString().split("T")[0];
-          } else if (typeof tx.Date === "string" && tx.Date.includes("T")) {
-            txDate = tx.Date.split("T")[0];
-          } else {
-            txDate = String(tx.Date);
-          }
-
-          let matchedLineId: number | null = null;
-          let confidence = "unmatched";
-          let method = "none";
-
-          const isBankTransfer = tx.Type === "SPEND-TRANSFER" || tx.Type === "RECEIVE-TRANSFER" ||
-            (description && description.toLowerCase().includes("bank transfer")) ||
-            (tx.Type === "SPEND" && description && /bank transfer to/i.test(description)) ||
-            (tx.Type === "RECEIVE" && description && /bank transfer from/i.test(description));
-
-          if (isBankTransfer) {
-            const interbankLine = cashflowLines.find(l => l.code === "TR-IB");
-            if (interbankLine) {
-              matchedLineId = interbankLine.id;
-              confidence = "high";
-              method = "bank_transfer_match";
-            }
-          }
-
-          if (!matchedLineId) {
-            const isFxCharge = (description === "OTT DEBIT" || description === "FEES AND CHARGES" || description === "MONTHLY CORPORATE ACCOUNT CHARGE") 
-              && contactName === "SANTANDER BUSINESS";
-            if (isFxCharge) {
-              const santFeeLine = cashflowLines.find(l => l.code === "SANT-FEE");
-              if (santFeeLine) {
-                matchedLineId = santFeeLine.id;
-                confidence = "medium";
-                method = "fx_fee_match";
-              }
-            }
-          }
-
-          const paymentProcessorAliases: Record<string, string> = {
-            "GOCARDLESS": "ARTHUR",
-          };
-
-          if (!matchedLineId) {
-            const resolvedName = paymentProcessorAliases[contactName.toUpperCase()] || contactName;
-            const supplierMatch = cashflowLines.find(
-              l => l.supplierName && resolvedName && resolvedName.toLowerCase().includes(l.supplierName.toLowerCase())
-            );
-            if (supplierMatch) {
-              matchedLineId = supplierMatch.id;
-              confidence = "high";
-              method = "supplier_match";
-            } else {
-              const nameMatch = cashflowLines.find(
-                l => {
-                  const words = l.name.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
-                  return words.some((w: string) =>
-                    resolvedName.toLowerCase().includes(w) ||
-                    contactName.toLowerCase().includes(w) ||
-                    (description && description.toLowerCase().includes(w))
-                  );
-                }
-              );
-              if (nameMatch) {
-                matchedLineId = nameMatch.id;
-                confidence = "medium";
-                method = "keyword_match";
-              }
-            }
-          }
+          const { lineId, confidence, method } = matchCashflowLine(contactName, description, cashflowLines);
 
           await storage.createActualTransaction({
-            xeroTransactionId: tx.BankTransactionID,
+            xeroTransactionId: txId,
             xeroSourceType: tx.Type,
             transactionDate: txDate,
             amount: String(amount),
             description,
             supplierOrCounterparty: contactName,
             bankAccountId: ba.id,
-            cashflowLineId: matchedLineId,
+            cashflowLineId: lineId,
             mappedConfidence: confidence,
             mappingMethod: method,
             reconciledFlag: tx.IsReconciled || false,
           });
 
-          existingXeroIds.add(tx.BankTransactionID);
+          existingXeroIds.add(txId);
           imported++;
-          if (matchedLineId) mapped++;
+          if (lineId) mapped++;
         }
 
-        if (transactions.length < 100) {
-          hasMore = false;
-        } else {
-          page++;
-        }
+        hasMore = transactions.length === 100;
+        page++;
+
       } catch (err: any) {
         const msg = `Error importing transactions for ${ba.name} (page ${page}): ${err.message}`;
         console.error(msg);
@@ -493,265 +474,33 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
         hasMore = false;
       }
     }
-
-  }
-
-  for (const ba of activeBankAccounts) {
-    let paymentPage = 1;
-    let paymentHasMore = true;
-    while (paymentHasMore) {
-      try {
-        const data = await xeroApiGet(
-          `Payments?where=Date>%3DDateTime(${startDate.getFullYear()},${startDate.getMonth() + 1},${startDate.getDate()})&order=Date%20DESC&page=${paymentPage}`
-        );
-        const payments = data.Payments || [];
-        console.log(`Fetched ${payments.length} payments for page ${paymentPage}`);
-
-        if (payments.length === 0) {
-          paymentHasMore = false;
-          break;
-        }
-
-        for (const pmt of payments) {
-          if (pmt.Status === "DELETED" || pmt.Status === "VOIDED") continue;
-          // Only import bill payments (outflows). ACCRECPAYMENT = rent income,
-          // already imported via invoice import — importing again creates duplicates.
-          if (pmt.PaymentType !== "ACCPAYPAYMENT") continue;
-          const pmtId = pmt.PaymentID;
-          if (!pmtId) continue;
-          if (existingXeroIds.has(pmtId)) continue;
-
-          const pmtAccountId = pmt.Account?.AccountID || "";
-          if (pmtAccountId !== ba.xeroAccountId) continue;
-
-          let pmtDate: string;
-          if (typeof pmt.Date === "string" && pmt.Date.startsWith("/Date(")) {
-            const ms = parseInt(pmt.Date.match(/\d+/)?.[0] || "0");
-            pmtDate = new Date(ms).toISOString().split("T")[0];
-          } else if (typeof pmt.Date === "string" && pmt.Date.includes("T")) {
-            pmtDate = pmt.Date.split("T")[0];
-          } else {
-            pmtDate = String(pmt.Date);
-          }
-
-
-          const contactName = pmt.Invoice?.Contact?.Name || "";
-          const invoiceNumber = pmt.Invoice?.InvoiceNumber || "";
-          const description = pmt.Reference || invoiceNumber || "Payment";
-          const isInflow = pmt.PaymentType === "ACCRECPAYMENT";
-          const amount = isInflow ? Math.abs(pmt.Amount) : -Math.abs(pmt.Amount);
-
-          const existingByDateAndAmount = existingTransactions.find(t => {
-            const tDate = typeof t.transactionDate === 'string' ? t.transactionDate : (t.transactionDate as Date)?.toISOString?.()?.split("T")?.[0];
-            const tAmt = parseFloat(t.amount as string);
-            return tDate === pmtDate && Math.abs(tAmt - amount) < 0.01 && t.bankAccountId === ba.id;
-          });
-          if (existingByDateAndAmount) continue;
-
-          const paymentProcessorAliases: Record<string, string> = {
-            "GOCARDLESS": "ARTHUR",
-          };
-
-          let matchedLineId: number | null = null;
-          let confidence = "unmatched";
-          let method = "none";
-
-          const resolvedName = paymentProcessorAliases[contactName.toUpperCase()] || contactName;
-          const supplierMatch = cashflowLines.find(
-            l => l.supplierName && resolvedName && resolvedName.toLowerCase().includes(l.supplierName.toLowerCase())
-          );
-          if (supplierMatch) {
-            matchedLineId = supplierMatch.id;
-            confidence = "high";
-            method = "supplier_match";
-          } else {
-            const nameMatch = cashflowLines.find(
-              l => {
-                const words = l.name.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
-                return words.some((w: string) =>
-                  resolvedName.toLowerCase().includes(w) ||
-                  contactName.toLowerCase().includes(w) ||
-                  description.toLowerCase().includes(w)
-                );
-              }
-            );
-            if (nameMatch) {
-              matchedLineId = nameMatch.id;
-              confidence = "medium";
-              method = "keyword_match";
-            }
-          }
-
-          await storage.createActualTransaction({
-            xeroTransactionId: pmtId,
-            xeroSourceType: pmt.PaymentType,
-            transactionDate: pmtDate,
-            amount: String(amount),
-            description,
-            supplierOrCounterparty: contactName,
-            bankAccountId: ba.id,
-            cashflowLineId: matchedLineId,
-            mappedConfidence: confidence,
-            mappingMethod: method,
-            reconciledFlag: pmt.IsReconciled || true,
-          });
-
-          existingXeroIds.add(pmtId);
-          imported++;
-          if (matchedLineId) mapped++;
-          console.log(`Imported payment: ${pmtDate} ${contactName} ${amount}`);
-        }
-
-        if (payments.length < 100) {
-          paymentHasMore = false;
-        } else {
-          paymentPage++;
-        }
-      } catch (err: any) {
-        console.log(`Payments import error: ${err.message}`);
-        paymentHasMore = false;
-      }
-    }
-  }
-
-  for (const ba of activeBankAccounts) {
-    try {
-      const fromDate = startDate.toISOString().split("T")[0];
-      const toDate = new Date().toISOString().split("T")[0];
-      console.log(`Fetching bank statement lines for ${ba.name} from ${fromDate} to ${toDate}`);
-      const statementsData = await xeroFinanceApiGet(
-        `BankStatements?bankAccountId=${ba.xeroAccountId}&fromDate=${fromDate}&toDate=${toDate}`
-      );
-      const statements = statementsData?.statements || [];
-      console.log(`Got ${statements.length} statements for ${ba.name}`);
-      let stmtImported = 0;
-      for (const stmt of statements) {
-        const stmtLines = stmt?.statementLines || [];
-        console.log(`Statement has ${stmtLines.length} lines`);
-        for (const sl of stmtLines) {
-          const slId = sl.statementLineId;
-          if (!slId) continue;
-          if (existingXeroIds.has(slId)) continue;
-
-          const alreadyMatched = existingXeroIds.has(sl.paymentId || "");
-          if (alreadyMatched) continue;
-
-          const isCredit = sl.creditAmount && parseFloat(sl.creditAmount) > 0;
-          const amount = isCredit
-            ? Math.abs(parseFloat(sl.creditAmount || "0"))
-            : -Math.abs(parseFloat(sl.debitAmount || "0"));
-
-          if (amount === 0) continue;
-
-          const txDate = sl.postedDate ? sl.postedDate.split("T")[0] : "";
-          if (!txDate) continue;
-
-          const description = sl.description || sl.payeeName || "";
-          const payeeName = sl.payeeName || "";
-
-          const existingByDateAndAmount = existingTransactions.find(t => {
-            const tDate = typeof t.transactionDate === 'string' ? t.transactionDate : (t.transactionDate as Date)?.toISOString?.()?.split("T")?.[0];
-            const tAmt = parseFloat(t.amount as string);
-            return tDate === txDate && Math.abs(tAmt - amount) < 0.01 && t.bankAccountId === ba.id;
-          });
-          if (existingByDateAndAmount) continue;
-
-          let matchedLineId: number | null = null;
-          let confidence = "unmatched";
-          let method = "none";
-
-          const isBankTransfer = description.toLowerCase().includes("bank transfer") ||
-            payeeName.toLowerCase().includes("bank transfer");
-          if (isBankTransfer) {
-            const interbankLine = cashflowLines.find(l => l.code === "TR-IB");
-            if (interbankLine) {
-              matchedLineId = interbankLine.id;
-              confidence = "high";
-              method = "bank_transfer_match";
-            }
-          }
-
-          if (!matchedLineId) {
-            const stmtPaymentProcessorAliases: Record<string, string> = {
-              "GOCARDLESS": "ARTHUR",
-            };
-            const resolvedPayee = stmtPaymentProcessorAliases[payeeName.toUpperCase()] || payeeName;
-            const supplierMatch = cashflowLines.find(
-              l => l.supplierName && resolvedPayee && resolvedPayee.toLowerCase().includes(l.supplierName.toLowerCase())
-            );
-            if (supplierMatch) {
-              matchedLineId = supplierMatch.id;
-              confidence = "high";
-              method = "supplier_match";
-            } else {
-              const nameMatch = cashflowLines.find(
-                l => {
-                  const words = l.name.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
-                  return words.some((w: string) =>
-                    resolvedPayee.toLowerCase().includes(w) ||
-                    payeeName.toLowerCase().includes(w) ||
-                    description.toLowerCase().includes(w)
-                  );
-                }
-              );
-              if (nameMatch) {
-                matchedLineId = nameMatch.id;
-                confidence = "medium";
-                method = "keyword_match";
-              }
-            }
-          }
-
-          await storage.createActualTransaction({
-            xeroTransactionId: slId,
-            xeroSourceType: isCredit ? "STATEMENT_RECEIVE" : "STATEMENT_SPEND",
-            transactionDate: txDate,
-            amount: String(amount),
-            description,
-            supplierOrCounterparty: payeeName,
-            bankAccountId: ba.id,
-            cashflowLineId: matchedLineId,
-            mappedConfidence: confidence,
-            mappingMethod: method,
-            reconciledFlag: false,
-          });
-
-          existingXeroIds.add(slId);
-          imported++;
-          stmtImported++;
-          if (matchedLineId) mapped++;
-        }
-      }
-      console.log(`Imported ${stmtImported} new statement lines for ${ba.name}`);
-    } catch (err: any) {
-      console.log(`Statement lines import for ${ba.name} skipped: ${err.message}`);
-    }
   }
 
   try {
-    const usdSupplierCodes = ['OUT-046', 'OUT-052', 'OUT-036', 'OUT-070'];
+    const usdSupplierCodes = ["OUT-046", "OUT-052", "OUT-036", "OUT-070"];
     const usdSupplierLines = cashflowLines.filter(l => usdSupplierCodes.includes(l.code));
     const usdSupplierIds = usdSupplierLines.map(l => l.id);
+    const santFee = cashflowLines.find(l => l.code === "SANT-FEE");
+
     if (usdSupplierIds.length > 0) {
-      const santFee = cashflowLines.find(l => l.code === "SANT-FEE");
       const allTxs = await storage.getActualTransactions({});
-      const ottTxs = allTxs.filter(t => 
-        t.description === "OTT DEBIT" && 
+      const ottTxs = allTxs.filter(t =>
+        t.description === "OTT DEBIT" &&
         t.supplierOrCounterparty === "SANTANDER BUSINESS" &&
         (!t.cashflowLineId || t.cashflowLineId === santFee?.id)
       );
       for (const ott of ottTxs) {
-        const sameDaySupplier = allTxs.find(t => 
-          t.transactionDate === ott.transactionDate && 
-          t.id !== ott.id && 
-          t.cashflowLineId && 
+        const sameDaySupplier = allTxs.find(t =>
+          t.transactionDate === ott.transactionDate &&
+          t.id !== ott.id &&
+          t.cashflowLineId &&
           usdSupplierIds.includes(t.cashflowLineId)
         );
-        if (sameDaySupplier && sameDaySupplier.cashflowLineId) {
-          await storage.updateActualTransaction(ott.id, { 
+        if (sameDaySupplier?.cashflowLineId) {
+          await storage.updateActualTransaction(ott.id, {
             cashflowLineId: sameDaySupplier.cashflowLineId,
             mappedConfidence: "high",
-            mappingMethod: "fx_same_day_match"
+            mappingMethod: "fx_same_day_match",
           });
         }
       }
@@ -764,10 +513,11 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
     entityType: "xero_sync",
     entityId: null,
     action: "import_transactions",
-    newValueJson: { imported, mapped, monthsBack, errors },
+    newValueJson: { imported, mapped, monthsBack, errors, source: "bank_transactions_only" },
     userName: "system",
   });
 
+  console.log(`Import complete: ${imported} imported, ${mapped} mapped, ${errors.length} errors`);
   return { imported, mapped, errors };
 }
 
