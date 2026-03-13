@@ -1221,16 +1221,24 @@ export async function registerRoutes(
     const bridgeCategories = ["Rent Revenue", "Recurring", "Tenancies", "Tradesmen", "Transfers", "Other"];
     for (const cat of bridgeCategories) categoryBridge[cat] = 0;
 
+    const currentMonthStart = currentMonth + "-01";
+    const actualTxRows = await db.execute(sql`
+      SELECT COALESCE(SUM(at.amount), 0)::text as total, cl.category
+      FROM actual_transactions at
+      LEFT JOIN cashflow_lines cl ON cl.id = at.cashflow_line_id
+      WHERE at.transaction_date >= ${currentMonthStart}::date
+        AND at.transaction_date <= ${lastActualDate}::date
+      GROUP BY cl.category
+    `);
+
+    console.log("BRIDGE DEBUG", JSON.stringify(actualTxRows.rows));
     let bridgeTotal = 0;
-    for (const line of lines.filter(l => l.active && !l.isRollup)) {
-      const fc = currentMonthForecasts.find(f => f.cashflowLineId === line.id);
-      if (!fc) continue;
-      const amount = parseFloat(fc.currentForecastAmount as string) || 0;
-      if (amount === 0) continue;
-      const cat = line.category || "Other";
+    for (const row of actualTxRows.rows) {
+      const cat = (row.category as string) || "Other";
       const normalizedCat = bridgeCategories.includes(cat) ? cat : "Other";
-      categoryBridge[normalizedCat] += amount;
-      bridgeTotal += amount;
+      const amt = parseFloat(row.total as string) || 0;
+      categoryBridge[normalizedCat] = (categoryBridge[normalizedCat] || 0) + amt;
+      bridgeTotal += amt;
     }
 
     const monthEndCash = openingBalanceTotal + bridgeTotal;
