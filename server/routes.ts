@@ -993,7 +993,8 @@ export async function registerRoutes(
     const currentCashPosition = activeBankAccounts.reduce(
       (sum, ba) => sum + (parseFloat(ba.currentBalance as string) || 0), 0
     );
-    const lastActualDate = new Date().toISOString().split("T")[0];
+    const lastTxResult = await db.execute(sql`SELECT MAX(transaction_date)::text as d FROM actual_transactions`);
+    const lastActualDate = lastTxResult.rows?.[0]?.d?.substring(0, 10) || new Date().toISOString().split("T")[0];
 
     const propDevOrder = ["16RC", "10KG", "32LFR", "84DD", "4WS", "26BLA", "26BLB", "26BLC", "27BLA", "27BLB", "27BLC", "27BLD", "26BL", "27BL"];
     const getOutflowSortKey = (name: string) => {
@@ -1171,7 +1172,8 @@ export async function registerRoutes(
     const currentCashPosition = activeBankAccounts.reduce(
       (sum, ba) => sum + (parseFloat(ba.currentBalance as string) || 0), 0
     );
-    const lastActualDate = new Date().toISOString().split("T")[0];
+    const lastTxResult = await db.execute(sql`SELECT MAX(transaction_date)::text as d FROM actual_transactions`);
+    const lastActualDate = lastTxResult.rows?.[0]?.d?.substring(0, 10) || new Date().toISOString().split("T")[0];
 
     let runningCash = openingBalanceTotal;
     const cashTrend: { month: string; closing: number; inflow: number; outflow: number }[] = [];
@@ -1214,46 +1216,23 @@ export async function registerRoutes(
 
     const activeNonRollup = lines.filter(l => l.active && !l.isRollup);
 
-    const currentMonthTxs = await storage.getTransactionsByMonth(currentMonth);
+    const currentMonthForecasts = forecasts.filter(f => f.forecastMonth === currentMonth);
     const categoryBridge: Record<string, number> = {};
     const bridgeCategories = ["Rent Revenue", "Recurring", "Tenancies", "Tradesmen", "Transfers", "Other"];
     for (const cat of bridgeCategories) categoryBridge[cat] = 0;
 
-    const linesWithTxs = new Set<number>();
-    for (const tx of currentMonthTxs) {
-      const line = tx.cashflowLineId ? lines.find(l => l.id === tx.cashflowLineId) : null;
-      if (line) linesWithTxs.add(line.id);
-      const cat = line?.category || "Other";
-      const normalizedCat = bridgeCategories.includes(cat) ? cat : "Other";
-      categoryBridge[normalizedCat] += parseFloat(tx.amount as string) || 0;
-    }
-
-    for (const line of activeNonRollup) {
-      if (line.code === "RENT-PRE") continue;
-      if (linesWithTxs.has(line.id)) continue;
-      const fc = forecasts.find(f => f.cashflowLineId === line.id && f.forecastMonth === currentMonth);
+    let bridgeTotal = 0;
+    for (const line of lines.filter(l => l.active && !l.isRollup)) {
+      const fc = currentMonthForecasts.find(f => f.cashflowLineId === line.id);
       if (!fc) continue;
-      const fcActual = fc.actualAmount ? parseFloat(fc.actualAmount as string) : null;
-      if (fcActual !== null) continue;
-      const amt = parseFloat(fc.currentForecastAmount as string) || 0;
-      if (amt === 0) continue;
+      const amount = parseFloat(fc.currentForecastAmount as string) || 0;
+      if (amount === 0) continue;
       const cat = line.category || "Other";
       const normalizedCat = bridgeCategories.includes(cat) ? cat : "Other";
-      categoryBridge[normalizedCat] += amt;
+      categoryBridge[normalizedCat] += amount;
+      bridgeTotal += amount;
     }
 
-    const prepaidLine = lines.find(l => l.code === "RENT-PRE");
-    if (prepaidLine) {
-      const prepaidFc = forecasts.find(f => f.cashflowLineId === prepaidLine.id && f.forecastMonth === currentMonth);
-      const prepaidFromForecast = prepaidFc?.actualAmount ? parseFloat(prepaidFc.actualAmount as string) : null;
-      const prepaidFromCurrent = prepaidFc?.currentForecastAmount ? parseFloat(prepaidFc.currentForecastAmount as string) : null;
-      const prepaidActual = prepaidFromForecast ?? prepaidFromCurrent ?? 0;
-      if (Math.abs(prepaidActual) > 0.01) {
-        categoryBridge["Rent Revenue"] += prepaidActual;
-      }
-    }
-
-    const bridgeTotal = Object.values(categoryBridge).reduce((sum, val) => sum + val, 0);
     const monthEndCash = openingBalanceTotal + bridgeTotal;
 
     res.json({
