@@ -1767,6 +1767,27 @@ export async function registerRoutes(
         res.status(500).json({ message: err.message });
       }
     });
-
+  app.post("/api/cleanup-duplicates", async (req, res) => {
+    if (req.query.token !== "cleanup123") {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    try {
+      await db.execute(sql`DELETE FROM actual_transactions WHERE xero_source_type = 'ACCRECPAYMENT'`);
+      await db.execute(sql`DELETE FROM actual_transactions WHERE xero_source_type IN ('STATEMENT_RECEIVE', 'STATEMENT_SPEND')`);
+      await db.execute(sql`
+        DELETE FROM actual_transactions WHERE id IN (
+          SELECT id FROM (
+            SELECT id, ROW_NUMBER() OVER (PARTITION BY xero_transaction_id ORDER BY id ASC) as rn
+            FROM actual_transactions WHERE xero_transaction_id IS NOT NULL
+          ) ranked WHERE rn > 1
+        )
+      `);
+      const count = await db.execute(sql`SELECT COUNT(*) as n FROM actual_transactions`);
+      res.json({ success: true, remainingTransactions: count.rows[0].n });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+  
   return httpServer;
 }
