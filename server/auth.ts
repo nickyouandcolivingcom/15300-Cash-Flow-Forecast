@@ -40,7 +40,7 @@ export function setupAuth(app: Express): void {
   const PgStore = connectPg(session);
   const sessionStore = new PgStore({
     pool,
-    createTableIfMissing: true,
+    createTableIfMissing: false,
     tableName: "user_sessions",
   });
 
