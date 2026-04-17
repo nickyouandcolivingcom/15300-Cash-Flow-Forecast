@@ -1230,7 +1230,7 @@ const rentActuals = await db.execute(sql`
   LEFT JOIN cashflow_lines cl ON cl.id = at.cashflow_line_id
   WHERE at.transaction_date >= ${currentMonthStart}::date
     AND at.transaction_date <= ${lastActualDate}::date
-    AND COALESCE(cl.code, '') != 'PREPAID-TOP'
+    AND cl.category = 'Rent Revenue'
 `);
 categoryBridge["Rent Revenue"] = parseFloat(rentActuals.rows[0]?.total as string) || 0;
   
