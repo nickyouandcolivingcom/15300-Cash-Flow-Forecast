@@ -1223,14 +1223,17 @@ export async function registerRoutes(
 
     const currentMonthStart = currentMonth + "-01";
 
-    // Rent Revenue: always use forecast (prepayments distort actuals)
-    for (const line of lines.filter(l => l.active && !l.isRollup && l.category === "Rent Revenue")) {
-      const fc = currentMonthForecasts.find(f => f.cashflowLineId === line.id);
-      if (!fc) continue;
-      const amt = parseFloat(fc.currentForecastAmount as string) || 0;
-      categoryBridge["Rent Revenue"] += amt;
-    }
-
+// Rent Revenue: use actuals
+const rentActuals = await db.execute(sql`
+  SELECT COALESCE(SUM(at.amount), 0)::text as total
+  FROM actual_transactions at
+  LEFT JOIN cashflow_lines cl ON cl.id = at.cashflow_line_id
+  WHERE at.transaction_date >= ${currentMonthStart}::date
+    AND at.transaction_date <= ${lastActualDate}::date
+    AND cl.category = 'Rent Revenue'
+`);
+categoryBridge["Rent Revenue"] = parseFloat(rentActuals.rows[0]?.total as string) || 0;
+  
     // All other categories: use actuals
     const actualTxRows = await db.execute(sql`
       SELECT COALESCE(SUM(at.amount), 0)::text as total, cl.category
@@ -1241,7 +1244,7 @@ export async function registerRoutes(
         AND cl.category != 'Rent Revenue'
       GROUP BY cl.category
     `);
-
+    
     for (const row of actualTxRows.rows) {
       const cat = (row.category as string) || "Other";
       const normalizedCat = bridgeCategories.includes(cat) ? cat : "Other";
