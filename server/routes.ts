@@ -1267,13 +1267,24 @@ categoryBridge["Rent Revenue"] = parseFloat(rentActuals.rows[0]?.total as string
     }
 
     const bridgeTotal = Object.values(categoryBridge).reduce((a, b) => a + b, 0);
-    const monthEndCash = openingBalanceTotal + bridgeTotal;
+
+    // Month End Cash = current cash + remaining forecast for the rest of the month
+    // remaining = (total April forecast) - (actuals to date, i.e. bridgeTotal)
+    const aprilForecastNet = currentMonthForecasts.reduce((sum, fc) => {
+      const line = lines.find(l => l.id === fc.cashflowLineId);
+      if (!line || !line.active || line.isRollup || line.code === "RENT-PRE") return sum;
+      return sum + (parseFloat(fc.currentForecastAmount as string) || 0);
+    }, 0);
+    const remainingForecast = aprilForecastNet - bridgeTotal;
+    const monthEndCash = currentCashPosition + remainingForecast;
+
     res.json({
       currentCashPosition,
       lastActualDate,
       openingBalanceTotal,
       freeCashFlow,
       monthEndCash,
+      remainingForecast,
       annualCash: { gross: annualGross, salary: annualSalaryDisplay, dla: annualDLADisplay, net: annualNet },
       totalInflow,
       totalOutflow,
@@ -1283,6 +1294,108 @@ categoryBridge["Rent Revenue"] = parseFloat(rentActuals.rows[0]?.total as string
       months,
       categoryBridge,
     });
+  });
+
+  app.post("/api/fix-production-v14", async (_req, res) => {
+    try {
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v14-applied' LIMIT 1`);
+      if (marker.rows?.length) {
+        return res.json({ success: false, message: "Fix v14 already applied" });
+      }
+
+      const results: string[] = [];
+
+      // Step 1: Update bank balances to correct April 17 reconciled values
+      const santRes = await db.execute(sql`UPDATE bank_accounts SET current_balance = '6015.77' WHERE name ILIKE '%SANTANDER%' AND active = true`);
+      const strRes = await db.execute(sql`UPDATE bank_accounts SET current_balance = '93.45' WHERE name ILIKE '%STARLING%' AND active = true`);
+      results.push(`Bank balances updated: Santander £6,015.77 (${santRes.rowCount} rows), Starling £93.45 (${strRes.rowCount} rows)`);
+
+      // Step 2: Clear existing forecast_rules (known empty but safe to clear)
+      await db.execute(sql`DELETE FROM forecast_rules`);
+
+      // Step 3: Build forecast_rules from March 2026 actuals (last full month), fall back to April for lines with no March data
+      // Prefer March over April to avoid partial-month distortion
+      const aprilTotals = await db.execute(sql`
+        SELECT at.cashflow_line_id, SUM(at.amount)::text as total
+        FROM actual_transactions at
+        JOIN cashflow_lines cl ON cl.id = at.cashflow_line_id
+        WHERE at.transaction_date >= '2026-04-01' AND at.transaction_date < '2026-05-01'
+          AND at.cashflow_line_id IS NOT NULL AND cl.active = true AND cl.is_rollup = false
+          AND cl.code NOT IN ('RENT-PRE', 'PREPAID-TOP', 'TR-IB', 'TR-OB')
+        GROUP BY at.cashflow_line_id HAVING ABS(SUM(at.amount)) > 0.01
+      `);
+      const marchTotals = await db.execute(sql`
+        SELECT at.cashflow_line_id, SUM(at.amount)::text as total
+        FROM actual_transactions at
+        JOIN cashflow_lines cl ON cl.id = at.cashflow_line_id
+        WHERE at.transaction_date >= '2026-03-01' AND at.transaction_date < '2026-04-01'
+          AND at.cashflow_line_id IS NOT NULL AND cl.active = true AND cl.is_rollup = false
+          AND cl.code NOT IN ('RENT-PRE', 'PREPAID-TOP', 'TR-IB', 'TR-OB')
+        GROUP BY at.cashflow_line_id HAVING ABS(SUM(at.amount)) > 0.01
+      `);
+
+      const amountMap: Record<number, number> = {};
+      for (const row of aprilTotals.rows) {
+        amountMap[row.cashflow_line_id as number] = parseFloat(row.total as string);
+      }
+      for (const row of marchTotals.rows) {
+        // March preferred over April
+        amountMap[row.cashflow_line_id as number] = parseFloat(row.total as string);
+      }
+
+      let rulesCreated = 0;
+      for (const [lineIdStr, amount] of Object.entries(amountMap)) {
+        const lineId = parseInt(lineIdStr);
+        // Skip DLA and salary — handled below with exact amounts
+        if (lineId === 100 || lineId === 174) continue;
+        await db.execute(sql`
+          INSERT INTO forecast_rules (cashflow_line_id, base_amount, recurrence_type, start_date, active, uplift_type)
+          VALUES (${lineId}, ${amount.toFixed(2)}, 'monthly', '2026-04-01', true, 'none')
+        `);
+        rulesCreated++;
+      }
+      results.push(`Created ${rulesCreated} forecast_rules from March/April 2026 actuals`);
+
+      // Step 4: DLA (code TR-ND, id=100): exactly -£3,000/month
+      const dlaRow = await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = 'TR-ND' LIMIT 1`);
+      const dlaId = dlaRow.rows?.[0]?.id || 100;
+      await db.execute(sql`
+        INSERT INTO forecast_rules (cashflow_line_id, base_amount, recurrence_type, start_date, active, uplift_type)
+        VALUES (${dlaId}, '-3000.00', 'monthly', '2026-04-01', true, 'none')
+      `);
+      results.push(`DLA (id=${dlaId}): -£3,000/month`);
+
+      // Step 5: Salary (code DIR-REM, id=174): exactly -£6,500/year in April
+      const salRow = await db.execute(sql`SELECT id FROM cashflow_lines WHERE code = 'DIR-REM' LIMIT 1`);
+      const salId = salRow.rows?.[0]?.id || 174;
+      await db.execute(sql`
+        INSERT INTO forecast_rules (cashflow_line_id, base_amount, recurrence_type, start_date, active, uplift_type)
+        VALUES (${salId}, '-6500.00', 'annual', '2026-04-01', true, 'none')
+      `);
+      results.push(`Salary (id=${salId}): -£6,500/year (annual rule, fires each April)`);
+
+      // Step 6: Remove the v13 marker override that was accidentally set on 27BLB#1 April 2026
+      // (it has override_amount=0 and would suppress the correct rent forecast)
+      const del = await db.execute(sql`
+        DELETE FROM overrides WHERE cashflow_line_id = 32 AND forecast_month = '2026-04' AND reason = 'fix-production-v13-applied'
+      `);
+      results.push(`Removed v13 marker override for 27BLB#1 Apr 2026 (${del.rowCount} rows)`);
+
+      // Step 7: Regenerate all forecast_months from the new rules
+      const { generateForecasts } = await import("./forecast-engine");
+      await generateForecasts();
+      results.push("Regenerated all forecast_months from rules");
+
+      // Mark as applied
+      await db.execute(sql`
+        INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason)
+        VALUES (${dlaId}, '2099-04', '0', 'fix-production-v14-applied')
+      `);
+
+      res.json({ success: true, results });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
   });
 
   app.post("/api/fix-production-v13", async (_req, res) => {
