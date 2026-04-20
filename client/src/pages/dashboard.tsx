@@ -125,12 +125,12 @@ export default function Dashboard() {
             </div>
             <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
               <div className="flex justify-between" data-testid="text-mec-opening">
-                <span>Opening</span>
-                <span className="tabular-nums font-medium">{formatCurrency(data.openingBalanceTotal)}</span>
+                <span>Current cash</span>
+                <span className="tabular-nums font-medium">{formatCurrency(data.currentCashPosition)}</span>
               </div>
               <div className="flex justify-between" data-testid="text-mec-movements">
-                <span>Net movements</span>
-                <span className="tabular-nums font-medium">{formatCurrency(data.monthEndCash - data.openingBalanceTotal)}</span>
+                <span>Remaining forecast</span>
+                <span className="tabular-nums font-medium">{formatCurrency(data.remainingForecast)}</span>
               </div>
             </div>
           </CardContent>

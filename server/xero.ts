@@ -509,15 +509,82 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
     console.error("FX remapping error:", fxErr.message);
   }
 
+  // Also import ACCPAYPAYMENT entries (supplier invoice payments reconciled in Xero AP)
+  // These do not appear in the BankTransactions API — they come from the Payments API
+  let apImported = 0;
+  try {
+    const activeBankAccountIds = new Set(activeBankAccounts.map(ba => ba.xeroAccountId));
+    let apPage = 1;
+    let apHasMore = true;
+
+    while (apHasMore) {
+      const apData = await xeroApiGet(
+        `Payments?where=PaymentType%3D%3D%22ACCPAYPAYMENT%22%26%26Date>%3DDateTime(${startDate.getFullYear()},${startDate.getMonth() + 1},${startDate.getDate()})&page=${apPage}`
+      );
+      const payments = apData.Payments || [];
+      console.log(`[ACCPAYPAYMENT] page ${apPage}: ${payments.length} payments`);
+
+      if (payments.length === 0) { apHasMore = false; break; }
+
+      for (const pmt of payments) {
+        if (pmt.Status === "DELETED" || pmt.Status === "VOIDED") continue;
+
+        const pmtId = pmt.PaymentID;
+        if (existingXeroIds.has(pmtId)) continue;
+
+        // Only import if the payment account is one of our active bank accounts
+        const pmtAccountId = pmt.Account?.AccountID;
+        if (!activeBankAccountIds.has(pmtAccountId)) continue;
+
+        const ba = activeBankAccounts.find(b => b.xeroAccountId === pmtAccountId);
+        if (!ba) continue;
+
+        const contactName = pmt.Invoice?.Contact?.Name || "";
+        const description = pmt.Invoice?.InvoiceNumber || pmt.Reference || contactName;
+        const txDate = parseTxDate(String(pmt.Date));
+        const amount = -Math.abs(parseFloat(pmt.Amount) || 0); // AP payments are always outflows
+
+        const { lineId, confidence, method } = matchCashflowLine(contactName, description, cashflowLines);
+
+        await storage.createActualTransaction({
+          xeroTransactionId: pmtId,
+          xeroSourceType: "ACCPAYPAYMENT",
+          transactionDate: txDate,
+          amount: String(amount),
+          description,
+          supplierOrCounterparty: contactName,
+          bankAccountId: ba.id,
+          cashflowLineId: lineId,
+          mappedConfidence: confidence,
+          mappingMethod: method,
+          reconciledFlag: true,
+        });
+
+        existingXeroIds.add(pmtId);
+        imported++;
+        apImported++;
+        if (lineId) mapped++;
+      }
+
+      apHasMore = payments.length === 100;
+      apPage++;
+    }
+    console.log(`ACCPAYPAYMENT import complete: ${apImported} imported`);
+  } catch (apErr: any) {
+    const msg = `Error importing ACCPAYPAYMENT entries: ${apErr.message}`;
+    console.error(msg);
+    errors.push(msg);
+  }
+
   await storage.createAuditLog({
     entityType: "xero_sync",
     entityId: null,
     action: "import_transactions",
-    newValueJson: { imported, mapped, monthsBack, errors, source: "bank_transactions_only" },
+    newValueJson: { imported, mapped, monthsBack, errors, apImported, source: "bank_transactions_and_ap_payments" },
     userName: "system",
   });
 
-  console.log(`Import complete: ${imported} imported, ${mapped} mapped, ${errors.length} errors`);
+  console.log(`Import complete: ${imported} imported (incl. ${apImported} AP payments), ${mapped} mapped, ${errors.length} errors`);
   return { imported, mapped, errors };
 }
 
