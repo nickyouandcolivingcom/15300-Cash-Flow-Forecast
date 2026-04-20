@@ -576,15 +576,94 @@ export async function importBankTransactions(monthsBack: number = 3): Promise<{ 
     errors.push(msg);
   }
 
+  // Also import ACCRECPAYMENT entries (rent/income invoice payments reconciled in Xero AR)
+  // These are tenant rent payments matched to invoices — not always in BankTransactions API
+  // Skip any that duplicate existing invoice-type transactions for the same line+month
+  let arImported = 0;
+  try {
+    const activeBankAccountIds = new Set(activeBankAccounts.map(ba => ba.xeroAccountId));
+    const existingInvoiceTxs = await storage.getActualTransactions({});
+    // Build a set of "lineId|month" for invoice-type transactions so we don't double-count
+    const invoiceMonthSet = new Set(
+      existingInvoiceTxs
+        .filter(t => t.xeroSourceType === "invoice")
+        .map(t => `${t.cashflowLineId}|${(t.transactionDate as string).substring(0, 7)}`)
+    );
+
+    let arPage = 1;
+    let arHasMore = true;
+
+    while (arHasMore) {
+      const arData = await xeroApiGet(
+        `Payments?where=PaymentType%3D%3D%22ACCRECPAYMENT%22%26%26Date>%3DDateTime(${startDate.getFullYear()},${startDate.getMonth() + 1},${startDate.getDate()})&page=${arPage}`
+      );
+      const payments = arData.Payments || [];
+      console.log(`[ACCRECPAYMENT] page ${arPage}: ${payments.length} payments`);
+
+      if (payments.length === 0) { arHasMore = false; break; }
+
+      for (const pmt of payments) {
+        if (pmt.Status === "DELETED" || pmt.Status === "VOIDED") continue;
+
+        const pmtId = pmt.PaymentID;
+        if (existingXeroIds.has(pmtId)) continue;
+
+        const pmtAccountId = pmt.Account?.AccountID;
+        if (!activeBankAccountIds.has(pmtAccountId)) continue;
+
+        const ba = activeBankAccounts.find(b => b.xeroAccountId === pmtAccountId);
+        if (!ba) continue;
+
+        const contactName = pmt.Invoice?.Contact?.Name || "";
+        const description = pmt.Invoice?.InvoiceNumber || pmt.Reference || contactName;
+        const txDate = parseTxDate(String(pmt.Date));
+        const txMonth = txDate.substring(0, 7);
+        const amount = Math.abs(parseFloat(pmt.Amount) || 0); // AR payments are inflows
+
+        const { lineId, confidence, method } = matchCashflowLine(contactName, description, cashflowLines);
+
+        // Skip if we already have an invoice-type transaction for this line+month
+        if (lineId && invoiceMonthSet.has(`${lineId}|${txMonth}`)) continue;
+
+        await storage.createActualTransaction({
+          xeroTransactionId: pmtId,
+          xeroSourceType: "ACCRECPAYMENT",
+          transactionDate: txDate,
+          amount: String(amount),
+          description,
+          supplierOrCounterparty: contactName,
+          bankAccountId: ba.id,
+          cashflowLineId: lineId,
+          mappedConfidence: confidence,
+          mappingMethod: method,
+          reconciledFlag: true,
+        });
+
+        existingXeroIds.add(pmtId);
+        imported++;
+        arImported++;
+        if (lineId) mapped++;
+      }
+
+      arHasMore = payments.length === 100;
+      arPage++;
+    }
+    console.log(`ACCRECPAYMENT import complete: ${arImported} imported`);
+  } catch (arErr: any) {
+    const msg = `Error importing ACCRECPAYMENT entries: ${arErr.message}`;
+    console.error(msg);
+    errors.push(msg);
+  }
+
   await storage.createAuditLog({
     entityType: "xero_sync",
     entityId: null,
     action: "import_transactions",
-    newValueJson: { imported, mapped, monthsBack, errors, apImported, source: "bank_transactions_and_ap_payments" },
+    newValueJson: { imported, mapped, monthsBack, errors, apImported, arImported, source: "bank_transactions_ap_and_ar_payments" },
     userName: "system",
   });
 
-  console.log(`Import complete: ${imported} imported (incl. ${apImported} AP payments), ${mapped} mapped, ${errors.length} errors`);
+  console.log(`Import complete: ${imported} imported (AP:${apImported} AR:${arImported}), ${mapped} mapped, ${errors.length} errors`);
   return { imported, mapped, errors };
 }
 
