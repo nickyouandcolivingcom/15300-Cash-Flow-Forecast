@@ -76,6 +76,7 @@ app.use((req, res, next) => {
       req.path === "/fix-production-v12" ||
       req.path === "/fix-production-v13" ||
       req.path === "/fix-production-v14" ||
+      req.path === "/fix-production-v15" ||
       req.path === "/refresh-balances" ||
       req.path === "/debug-xero-march10"
     ) {

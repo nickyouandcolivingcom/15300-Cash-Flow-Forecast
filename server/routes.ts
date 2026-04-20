@@ -1296,6 +1296,63 @@ categoryBridge["Rent Revenue"] = parseFloat(rentActuals.rows[0]?.total as string
     });
   });
 
+  app.post("/api/fix-production-v15", async (_req, res) => {
+    // Create a £0/month forecast rule for every active non-rollup line that has no rule.
+    // This ensures "Update Rule" always appears in the grid editor, not just "Override Month".
+    // Excludes: PREPAID-TOP, TR-IB (interbank), HISTORICAL lines, DEP-* deposit lines.
+    try {
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v15-applied' LIMIT 1`);
+      if (marker.rows?.length) {
+        return res.json({ success: false, message: "Fix v15 already applied" });
+      }
+
+      const excludeCodes = [
+        'RENT-PRE', 'PREPAID-TOP', 'TR-IB', 'TR-OB',
+        // HISTORICAL lines — no longer active in practice but active flag is true
+        'MTG-KR', 'MTG-LI', 'MTG-LB', 'MTG-PM',
+        'UTL-OE', 'UTL-ST', 'UTL-BG', 'UTL-DW', 'UTL-EDF', 'UTL-VB',
+        'SFT-NF', 'SFT-RP', 'SFT-SQ',
+        // Deposit lines — one-off per tenancy, not recurring
+        'DEP-01', 'DEP-02', 'DEP-03', 'DEP-04',
+      ];
+
+      const linesWithRules = await db.execute(sql`
+        SELECT DISTINCT cashflow_line_id FROM forecast_rules WHERE active = true
+      `);
+      const hasRule = new Set(linesWithRules.rows.map(r => r.cashflow_line_id as number));
+
+      const allLines = await db.execute(sql`
+        SELECT id, code FROM cashflow_lines
+        WHERE active = true AND is_rollup = false
+      `);
+
+      let created = 0;
+      const skipped: string[] = [];
+
+      for (const line of allLines.rows) {
+        const id = line.id as number;
+        const code = (line.code as string) || '';
+        if (hasRule.has(id)) continue;
+        if (excludeCodes.includes(code)) { skipped.push(code); continue; }
+
+        await db.execute(sql`
+          INSERT INTO forecast_rules (cashflow_line_id, base_amount, recurrence_type, start_date, active, uplift_type)
+          VALUES (${id}, '0.00', 'monthly', '2026-04-01', true, 'none')
+        `);
+        created++;
+      }
+
+      await db.execute(sql`
+        INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason)
+        VALUES (100, '2099-05', '0', 'fix-production-v15-applied')
+      `);
+
+      res.json({ success: true, rulesCreated: created, skipped: skipped.length, message: `Created ${created} placeholder rules so Update Rule is available on all lines` });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   app.post("/api/fix-production-v14", async (_req, res) => {
     try {
       const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v14-applied' LIMIT 1`);
