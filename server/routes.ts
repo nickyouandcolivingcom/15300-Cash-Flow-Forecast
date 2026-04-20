@@ -1238,14 +1238,14 @@ const rentActuals = await db.execute(sql`
 `);
 categoryBridge["Rent Revenue"] = parseFloat(rentActuals.rows[0]?.total as string) || 0;
   
-    // All other categories: use actuals
+    // All other categories: use actuals (including unmapped transactions as 'Other')
     const actualTxRows = await db.execute(sql`
-      SELECT COALESCE(SUM(at.amount), 0)::text as total, cl.category
+      SELECT COALESCE(SUM(at.amount), 0)::text as total, COALESCE(cl.category, 'Other') as category
       FROM actual_transactions at
       LEFT JOIN cashflow_lines cl ON cl.id = at.cashflow_line_id
       WHERE at.transaction_date >= ${currentMonthStart}::date
         AND at.transaction_date <= ${lastActualDate}::date
-        AND cl.category != 'Rent Revenue'
+        AND (cl.category IS NULL OR cl.category != 'Rent Revenue')
       GROUP BY cl.category
     `);
     
@@ -1348,6 +1348,107 @@ categoryBridge["Rent Revenue"] = parseFloat(rentActuals.rows[0]?.total as string
       `);
 
       res.json({ success: true, rulesCreated: created, skipped: skipped.length, message: `Created ${created} placeholder rules so Update Rule is available on all lines` });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.post("/api/fix-production-v16", async (_req, res) => {
+    // Fix quarterly payments that were incorrectly set as monthly by fix-v14.
+    // Detection: outflow lines where actual_transactions only appear in 1 unique month
+    // out of Jan-Apr 2026 (a monthly line would appear in 3-4 months).
+    // Also catches lines appearing in exactly 2 months that are 3 months apart (Jan+Apr pattern).
+    // Excludes: DLA, Salary, interbank, RENT-PRE, lines with amount < £100.
+    try {
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v16-applied' LIMIT 1`);
+      if (marker.rows?.length) {
+        return res.json({ success: false, message: "Fix v16 already applied" });
+      }
+
+      const results: string[] = [];
+
+      // Step 1: Query actual outflow transaction frequency (Jan-Apr 2026) per line
+      const freqCheck = await db.execute(sql`
+        SELECT
+          cl.id,
+          cl.name,
+          cl.code,
+          COUNT(DISTINCT TO_CHAR(at.transaction_date, 'YYYY-MM')) as months_active,
+          ARRAY_AGG(DISTINCT TO_CHAR(at.transaction_date, 'YYYY-MM') ORDER BY TO_CHAR(at.transaction_date, 'YYYY-MM')) as tx_months,
+          MAX(at.transaction_date)::text as latest_tx,
+          SUM(at.amount)::text as total_amount
+        FROM actual_transactions at
+        JOIN cashflow_lines cl ON cl.id = at.cashflow_line_id
+        JOIN forecast_rules fr ON fr.cashflow_line_id = cl.id AND fr.active = true AND fr.recurrence_type = 'monthly'
+        WHERE at.transaction_date >= '2026-01-01' AND at.transaction_date < '2026-05-01'
+          AND at.amount < -100
+          AND cl.active = true AND cl.is_rollup = false
+          AND cl.code NOT IN ('TR-ND', 'DIR-REM', 'RENT-PRE', 'PREPAID-TOP', 'TR-IB', 'TR-OB', 'SANT-FEE')
+        GROUP BY cl.id, cl.name, cl.code
+        HAVING COUNT(DISTINCT TO_CHAR(at.transaction_date, 'YYYY-MM')) <= 2
+        ORDER BY SUM(at.amount) ASC
+      `);
+
+      results.push(`Analysed ${freqCheck.rows.length} outflow lines with ≤2 active months in Jan-Apr 2026 (monthly lines should appear in 3-4 months)`);
+
+      let updated = 0;
+      const details: string[] = [];
+
+      for (const row of freqCheck.rows) {
+        const lineId = row.id as number;
+        const lineName = row.name as string;
+        const monthsActive = parseInt(row.months_active as string);
+        const txMonths = row.tx_months as string[]; // e.g. ['2026-01', '2026-04']
+        const totalAmount = parseFloat(row.total_amount as string) || 0;
+
+        // Skip if amount is too small
+        if (Math.abs(totalAmount) < 100) {
+          details.push(`Skipped ${lineName}: total amount ${totalAmount.toFixed(2)} too small`);
+          continue;
+        }
+
+        // For 2-month lines: check if they are exactly 3 months apart (quarterly signature)
+        // e.g. Jan+Apr = 3 months, Feb+May = 3 months
+        if (monthsActive === 2) {
+          const [m1, m2] = txMonths;
+          const [y1, mo1] = m1.split('-').map(Number);
+          const [y2, mo2] = m2.split('-').map(Number);
+          const diffMonths = (y2 * 12 + mo2) - (y1 * 12 + mo1);
+          if (diffMonths !== 3) {
+            details.push(`Skipped ${lineName}: 2 months apart by ${diffMonths} months (not quarterly pattern), months=${txMonths.join(',')}`);
+            continue;
+          }
+        }
+
+        // Determine quarterly start_date = month of first occurrence in our window
+        // This anchors the quarterly cycle correctly (e.g. Jan fires Jan,Apr,Jul,Oct; Apr fires Apr,Jul,Oct,Jan)
+        const anchorMonth = txMonths[0]; // earliest month
+        const startDate = anchorMonth + '-01';
+
+        await db.execute(sql`
+          UPDATE forecast_rules
+          SET recurrence_type = 'quarterly', start_date = ${startDate}
+          WHERE cashflow_line_id = ${lineId} AND active = true AND recurrence_type = 'monthly'
+        `);
+        details.push(`Updated "${lineName}" (id=${lineId}): monthly→quarterly, start=${startDate}, total=${totalAmount.toFixed(2)}, months=${txMonths.join(',')}`);
+        updated++;
+      }
+
+      results.push(`Updated ${updated} rules from monthly to quarterly`);
+      results.push(...details);
+
+      // Step 2: Regenerate all forecast_months with corrected recurrence
+      const { generateForecasts } = await import("./forecast-engine");
+      await generateForecasts();
+      results.push("Regenerated all forecast_months");
+
+      // Mark as applied
+      await db.execute(sql`
+        INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason)
+        VALUES (100, '2099-07', '0', 'fix-production-v16-applied')
+      `);
+
+      res.json({ success: true, results });
     } catch (err: any) {
       res.status(500).json({ success: false, message: err.message });
     }
