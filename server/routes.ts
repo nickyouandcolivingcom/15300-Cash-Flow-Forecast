@@ -1454,6 +1454,72 @@ categoryBridge["Rent Revenue"] = parseFloat(rentActuals.rows[0]?.total as string
     }
   });
 
+  app.post("/api/fix-production-v16b", async (_req, res) => {
+    // Correct v16 errors: revert utilities/council tax/Landbay back to monthly,
+    // fix Landbay amount (double-payment was a weekend date-shift artefact),
+    // change NRLA and HMRC from quarterly to annual.
+    try {
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v16b-applied' LIMIT 1`);
+      if (marker.rows?.length) {
+        return res.json({ success: false, message: "Fix v16b already applied" });
+      }
+
+      const results: string[] = [];
+
+      // Revert to monthly: Council Tax 32LFR (233), Council Tax 84DD (235),
+      // Octopus Energy 32LFR (181), Octopus Energy 10KG (176),
+      // Severn Trent 4WS (201), EON 27BLA (187)
+      const revertIds = [233, 235, 181, 176, 201, 187];
+      for (const id of revertIds) {
+        const r = await db.execute(sql`
+          UPDATE forecast_rules SET recurrence_type = 'monthly'
+          WHERE cashflow_line_id = ${id} AND active = true
+        `);
+        results.push(`Reverted line id=${id} to monthly (${r.rowCount} rule updated)`);
+      }
+
+      // Landbay 84DD (id=207): monthly at £1,027.36
+      // v16 set quarterly at £2,054.72 because Jan payment was pushed into Feb by weekend date-shift
+      await db.execute(sql`
+        UPDATE forecast_rules
+        SET recurrence_type = 'monthly', base_amount = '-1027.36', start_date = '2026-04-01'
+        WHERE cashflow_line_id = 207 AND active = true
+      `);
+      results.push("Landbay 84DD (id=207): monthly at -£1,027.36 (was quarterly £2,054.72 — weekend date-shift artefact)");
+
+      // NRLA (id=152): annual
+      await db.execute(sql`
+        UPDATE forecast_rules
+        SET recurrence_type = 'annual', start_date = '2026-04-01'
+        WHERE cashflow_line_id = 152 AND active = true
+      `);
+      results.push("NRLA (id=152): quarterly → annual");
+
+      // HMRC (id=84): annual
+      await db.execute(sql`
+        UPDATE forecast_rules
+        SET recurrence_type = 'annual', start_date = '2026-04-01'
+        WHERE cashflow_line_id = 84 AND active = true
+      `);
+      results.push("HMRC (id=84): quarterly → annual");
+
+      // Regenerate all forecast_months with corrected rules
+      const { generateForecasts } = await import("./forecast-engine");
+      await generateForecasts();
+      results.push("Regenerated all forecast_months");
+
+      // Mark as applied
+      await db.execute(sql`
+        INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason)
+        VALUES (100, '2099-08', '0', 'fix-production-v16b-applied')
+      `);
+
+      res.json({ success: true, results });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   app.post("/api/fix-production-v14", async (_req, res) => {
     try {
       const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v14-applied' LIMIT 1`);
