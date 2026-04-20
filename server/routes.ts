@@ -1198,8 +1198,8 @@ export async function registerRoutes(
     const freeCashFlow = totalInflow + totalOutflow;
 
     const futureMonths = months.slice(1);
-    const salaryLine = lines.find(l => l.code === "OUT-002") || lines.find(l => l.name?.toUpperCase().includes("NICK DAVIDSON"));
-    const dlaLine = lines.find(l => l.code === "TR-DLA") || lines.find(l => l.name?.toUpperCase() === "DLA");
+    const salaryLine = lines.find(l => l.code === "DIR-REM") || lines.find(l => l.code === "OUT-002") || lines.find(l => l.name?.toUpperCase().includes("DIR REMUNERATION") || l.name?.toUpperCase().includes("NICK DAVIDSON"));
+    const dlaLine = lines.find(l => l.code === "TR-ND") || lines.find(l => l.code === "TR-DLA") || lines.find(l => l.name?.toUpperCase() === "DLA");
     let annualNet = 0;
     let annualSalary = 0;
     let annualDLA = 0;
@@ -1213,6 +1213,9 @@ export async function registerRoutes(
       }
     }
     const annualGross = annualNet - annualSalary - annualDLA;
+    // Convert salary/DLA to positive add-back amounts for display
+    const annualSalaryDisplay = Math.abs(annualSalary);
+    const annualDLADisplay = Math.abs(annualDLA);
 
     const activeNonRollup = lines.filter(l => l.active && !l.isRollup);
 
@@ -1223,7 +1226,7 @@ export async function registerRoutes(
 
     const currentMonthStart = currentMonth + "-01";
 
-// Rent Revenue: use actuals
+// Rent Revenue: use actuals, excluding Prepaid Topline (code RENT-PRE or PREPAID-TOP)
 const rentActuals = await db.execute(sql`
   SELECT COALESCE(SUM(at.amount), 0)::text as total
   FROM actual_transactions at
@@ -1231,6 +1234,7 @@ const rentActuals = await db.execute(sql`
   WHERE at.transaction_date >= ${currentMonthStart}::date
     AND at.transaction_date <= ${lastActualDate}::date
     AND cl.category = 'Rent Revenue'
+    AND COALESCE(cl.code, '') NOT IN ('RENT-PRE', 'PREPAID-TOP')
 `);
 categoryBridge["Rent Revenue"] = parseFloat(rentActuals.rows[0]?.total as string) || 0;
   
@@ -1270,7 +1274,7 @@ categoryBridge["Rent Revenue"] = parseFloat(rentActuals.rows[0]?.total as string
       openingBalanceTotal,
       freeCashFlow,
       monthEndCash,
-      annualCash: { gross: annualGross, salary: annualSalary, dla: annualDLA, net: annualNet },
+      annualCash: { gross: annualGross, salary: annualSalaryDisplay, dla: annualDLADisplay, net: annualNet },
       totalInflow,
       totalOutflow,
       pendingVariances,
@@ -1279,6 +1283,45 @@ categoryBridge["Rent Revenue"] = parseFloat(rentActuals.rows[0]?.total as string
       months,
       categoryBridge,
     });
+  });
+
+  app.post("/api/fix-production-v13", async (_req, res) => {
+    try {
+      const marker = await db.execute(sql`SELECT 1 FROM overrides WHERE reason = 'fix-production-v13-applied' LIMIT 1`);
+      if (marker.rows?.length) {
+        return res.json({ success: false, message: "Fix v13 already applied" });
+      }
+
+      const results: string[] = [];
+
+      // Issue 4: Move all Tenancy deposit lines (DEP-*) from direction='inflow' to 'outflow'
+      // so that Tenancies category appears only in the Cash Outflows section of the grid
+      const depFix = await db.execute(sql`
+        UPDATE cashflow_lines
+        SET direction = 'outflow'
+        WHERE category = 'Tenancies' AND direction = 'inflow'
+      `);
+      results.push(`Fixed Tenancies direction: ${depFix.rowCount} lines changed from inflow to outflow`);
+
+      // Issue 5: Remove duplicate forecast rows for 27BLB#1 (cashflow_line_id=32)
+      // that contain mortgage amount (-1161.92) instead of the correct rent (650)
+      const blbFix = await db.execute(sql`
+        DELETE FROM forecast_months
+        WHERE cashflow_line_id = 32
+          AND ROUND(current_forecast_amount::numeric, 2) = -1161.92
+      `);
+      results.push(`Fixed 27BLB#1 forecasts: removed ${blbFix.rowCount} rows with -1161.92 mortgage amount`);
+
+      // Mark as applied
+      await db.execute(sql`
+        INSERT INTO overrides (cashflow_line_id, forecast_month, override_amount, reason)
+        VALUES (32, '2026-04', '0', 'fix-production-v13-applied')
+      `);
+
+      res.json({ success: true, results });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
   });
 
   app.post("/api/fix-production-v12", async (_req, res) => {
